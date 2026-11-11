@@ -1,0 +1,20 @@
+[Unit]
+Description=Secret Santa Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=santa
+WorkingDirectory=/opt/secret-santa
+EnvironmentFile=/etc/santa-bot.env
+ExecStart=/opt/secret-santa/.venv/bin/python -m santa_bot
+Restart=always
+RestartSec=5
+# базовая изоляция
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/santa-bot
+
+[Install]
+WantedBy=multi-user.target

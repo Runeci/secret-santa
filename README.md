@@ -43,3 +43,26 @@ pytest
 **Приватность.** Пары хранятся в таблице `assignments`; интерфейс показывает каждому только
 его собственную пару, включая организатора. Администратор сервера с доступом к файлу БД
 технически может их прочитать.
+
+## Бесплатный хостинг: Oracle Cloud Always Free
+
+Бот на long polling должен работать постоянно, поэтому подходит виртуальная машина, а не
+«засыпающий» веб-тариф. Oracle Always Free даёт такую VM бесплатно (нужна банковская карта
+для верификации; списаний на Always Free нет). Актуальные лимиты проверьте в консоли OCI.
+
+1. Зарегистрируйтесь на cloud.oracle.com, создайте инстанс: образ Ubuntu 24.04, shape
+   `VM.Standard.A1.Flex` (1 OCPU / 6 ГБ достаточно) или `VM.Standard.E2.1.Micro`.
+   Порты открывать не нужно: бот сам обращается к Telegram, входящих соединений нет.
+   Если «Out of capacity» — повторите позже или попробуйте другой домен доступности.
+2. Подключитесь по SSH, склонируйте репозиторий и установите:
+   ```bash
+   git clone https://github.com/Runeci/secret-santa.git && cd secret-santa
+   git checkout claude/magical-bardeen-o3ltqa
+   sudo bash deploy/install.sh
+   sudo nano /etc/santa-bot.env        # BOT_TOKEN=...
+   sudo systemctl restart santa-bot
+   journalctl -u santa-bot -f          # логи
+   ```
+3. База лежит в `/var/lib/santa-bot/santa.db` — периодически копируйте её себе.
+
+Обновление: `git pull && sudo bash deploy/install.sh && sudo systemctl restart santa-bot`.
