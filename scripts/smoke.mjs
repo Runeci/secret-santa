@@ -30,14 +30,20 @@ sh(["d1", "migrations", "apply", "secret-santa", "--local"]);
 
 const worker = spawn("npx", ["wrangler", "dev", "--port", String(WORKER_PORT), "--ip", "127.0.0.1",
   "--var", "BOT_TOKEN:123:SMOKE", "--var", `WEBHOOK_SECRET:${SECRET}`, "--var", `TELEGRAM_API_ROOT:http://127.0.0.1:${TG_PORT}`],
-  { env, stdio: ["ignore", "pipe", "pipe"] });
+  { env, stdio: ["ignore", "pipe", "pipe"], detached: true }); // своя группа процессов: убиваем целиком
 let wlog = "";
 worker.stdout.on("data", (d) => (wlog += d));
 worker.stderr.on("data", (d) => (wlog += d));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fail = (msg) => { console.error("FAIL:", msg, "\n--- worker log ---\n" + wlog.slice(-2500)); cleanup(1); };
-function cleanup(code) { worker.kill("SIGKILL"); tg.close(); process.exit(code); }
+function cleanup(code) {
+  try { process.kill(-worker.pid, "SIGKILL"); } catch { worker.kill("SIGKILL"); }
+  tg.close();
+  process.exit(code);
+}
+process.on("SIGINT", () => cleanup(130));
+process.on("SIGTERM", () => cleanup(143));
 
 let uid = 0, seq = 0;
 const from = (id, n) => ({ id, is_bot: false, first_name: n });
@@ -66,11 +72,23 @@ try {
   await say(3, "Bob", `/start ${code}`);
   await click(2, "Ann", "wa:1");
   await say(2, "Ann", "Book");
+
+  // не у всех есть подарки -> жеребьёвка не проходит, организатору перечислены неготовые
+  await click(1, "Org", "mdy:1");
+  await sleep(1500);
+  const refusal = log.find((l) => l.method === "editMessageText" && /не все добавили подарки/.test(l.text ?? ""));
+  if (!refusal) fail("draw should be refused while someone has no gifts");
+  if (log.some((l) => /Тайный Санта для/.test(l.text ?? ""))) fail("pairs must not be sent before everyone added gifts");
+
+  await click(1, "Org", "wa:1");
+  await say(1, "Org", "Coffee");
+  await click(3, "Bob", "wa:1");
+  await say(3, "Bob", "Tea");
   await click(1, "Org", "mdy:1");
   for (let i = 0; i < 40 && log.filter((l) => l.method === "sendMessage" && /Тайный Санта для/.test(l.text ?? "")).length < 3; i++) await sleep(500);
   const dms = log.filter((l) => l.method === "sendMessage" && /Тайный Санта для/.test(l.text ?? ""));
   const chats = new Set(dms.map((d) => d.chat_id));
   if (dms.length !== 3 || chats.size !== 3) fail(`expected 3 distinct DMs via queue, got ${dms.length} to ${[...chats]}`);
-  console.log("OK: webhook 401 on bad secret; game created, 3 players joined, draw delivered via queue to", [...chats].join(", "));
+  console.log("OK: webhook 401 on bad secret; draw refused until all added gifts; then delivered via queue to", [...chats].join(", "));
   cleanup(0);
 } catch (e) { fail(String(e)); }

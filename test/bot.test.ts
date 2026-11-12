@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BOT_USERNAME, Client, Env, plain } from "./helpers/telegram";
 
 let env: Env;
@@ -12,6 +12,12 @@ async function wishAll(code: string) {
 
 beforeEach(() => {
   env = new Env();
+  // боевой обработчик ошибок пишет в console.error — ловим это, чтобы ошибки не «глотались» незаметно
+  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void env.errors.push(args));
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  expect(env.errors).toEqual([]); // в обычных тестах ни одна ошибка обработчика не допускается
 });
 
 async function createGame(org: Client, title = "Офис 2026"): Promise<string> {
@@ -483,5 +489,107 @@ describe("жеребьёвка: подарки у всех", () => {
     await org.click("Запустить");
     expect(org.last()).toContain("Жеребьёвка проведена");
     expect((await env.db.getGame(gid))!.status).toBe("drawn");
+  });
+});
+
+describe("граничные случаи (ревью)", () => {
+  async function drawnGame() {
+    const org = env.user(1, "Орг"), a = env.user(2, "А"), b = env.user(3, "Б");
+    const code = await createGame(org);
+    for (const u of [a, b]) await u.say(`/start ${code}`);
+    await wishAll(code);
+    const gid = (await env.db.getGameByCode(code))!.id;
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    await org.click("Запустить");
+    return { org, a, b, code, gid };
+  }
+
+  it("в группе бот ничего не раскрывает: ни меню, ни пару", async () => {
+    const { a, gid } = await drawnGame();
+    const before = env.sent.length;
+    await a.sayInGroup("/start");
+    await a.callbackInGroup(`to:${gid}`);
+    await a.callbackInGroup(`g:${gid}`);
+    const leaked = env.sent.slice(before).filter((s) => s.chat === -1001 || /Санта для/.test(plain(s.text)));
+    expect(leaked.every((s) => !/Санта для|Ваши игры|Управление/.test(plain(s.text)))).toBe(true);
+    expect(env.sent.slice(before).some((s) => s.edit)).toBe(false); // ничего не редактировалось в группе
+    expect(env.alerts.at(-1)).toContain("личных сообщениях");
+  });
+
+  it("сбой рассылки после жеребьёвки: организатор узнаёт, игра сохранена, пару можно узнать кнопкой", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "А"), b = env.user(3, "Б");
+    const code = await createGame(org);
+    for (const u of [a, b]) await u.say(`/start ${code}`);
+    await wishAll(code);
+    env.outbox.send = async () => {
+      throw new Error("queue down");
+    };
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    await org.click("Запустить");
+    expect(org.last()).toContain("рассылку личных сообщений отправить не удалось");
+    env.errors.length = 0; // сбой очереди залогирован — это ожидаемо в этом тесте
+    expect((await env.db.getGame((await env.db.getGameByCode(code))!.id))!.status).toBe("drawn");
+    await a.say("/start");
+    await a.click("Кому я дарю");
+    expect(a.last()).toContain("Тайный Санта для");
+  });
+
+  it("при необработанной ошибке пользователь видит сообщение, а не тишину", async () => {
+    const u = env.user(5, "Z");
+    const orig = env.db.gamesOfUser.bind(env.db);
+    env.db.gamesOfUser = async () => {
+      throw new Error("D1 unavailable");
+    };
+    await u.say("/start");
+    env.db.gamesOfUser = orig;
+    expect(u.last()).toContain("Что-то пошло не так");
+    expect(env.errors.length).toBe(1);
+    env.errors.length = 0; // ошибка ожидаема в этом тесте
+  });
+
+  it("совпадающее правило называет номер существующего", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "А");
+    const code = await createGame(org);
+    await a.say(`/start ${code}`);
+    await org.click("Управление");
+    await org.click("Правила");
+    for (let i = 0; i < 2; i++) {
+      await org.click("Добавить правило");
+      await org.click("Орг");
+      await org.click("А");
+      await org.click("Сохранить");
+    }
+    expect(env.alerts.at(-1)).toContain("№1");
+  });
+
+  it("экраны с 50 участниками и очень длинными именами укладываются в лимит Telegram и показывают всех", async () => {
+    const org = env.user(1, "Орг");
+    const code = await createGame(org);
+    const gid = (await env.db.getGameByCode(code))!.id;
+    for (let i = 2; i <= 50; i++) await env.db.addPlayer(gid, i, `Игрок${i}` + "я".repeat(120) + ` (@u${i})`);
+    const all = Array.from({ length: 50 }, (_, i) => i + 1);
+    await env.db.addRule(gid, all); // одно огромное правило
+    for (let i = 0; i < 20; i++) await env.db.addRule(gid, [i + 2, i + 3, i + 4]);
+    const shown = (from: number) =>
+      env.sent.slice(from).filter((s) => s.chat === 1).map((s) => plain(s.text)).join("\n");
+
+    let n = env.sent.length;
+    await org.click("Управление");
+    await org.click("Участники");
+    for (let i = 2; i <= 50; i++) expect(shown(n)).toContain(`Игрок${i}я`);
+
+    await org.click("Управление");
+    n = env.sent.length;
+    await org.click("Правила");
+    expect(shown(n)).toContain("Игрок50я"); // огромное правило показано целиком, пусть и в нескольких сообщениях
+
+    await org.click("Управление");
+    n = env.sent.length;
+    await org.click("Провести жеребьёвку"); // ни у кого нет подарков -> длинный список «кто не добавил»
+    expect(shown(n)).toContain("не все добавили подарки");
+    for (let i = 2; i <= 50; i++) expect(shown(n)).toContain(`Игрок${i}я`);
+    expect(org.hasButton("Управление")).toBe(true); // клавиатура на последнем сообщении
   });
 });

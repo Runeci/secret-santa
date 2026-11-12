@@ -1,4 +1,4 @@
-import { MAX_PLAYERS, MAX_TITLE_LEN, MAX_WISHES, MAX_WISH_LEN, MIN_PLAYERS } from "./config";
+import { MAX_PLAYERS, MAX_RULES, MAX_TITLE_LEN, MAX_WISHES, MAX_WISH_LEN, MIN_PLAYERS } from "./config";
 import type { Database, Game, Player } from "./db";
 import { DrawImpossible, makeDraw } from "./draw";
 
@@ -55,7 +55,8 @@ export class Service {
     if (await this.db.isPlayer(game.id, userId)) return { result: "already", game };
     if (game.status !== "open") return { result: "closed", game };
     if ((await this.db.getPlayers(game.id)).length >= MAX_PLAYERS) return { result: "full", game };
-    await this.db.addPlayer(game.id, userId, userName);
+    // атомарно: если жеребьёвка успела пройти между проверкой и вставкой — вход закрыт
+    if (!(await this.db.addPlayer(game.id, userId, userName))) return { result: "closed", game };
     return { result: "joined", game };
   }
 
@@ -118,10 +119,10 @@ export class Service {
     if (members.size < 2) throw new UserError("В группе должно быть минимум 2 человека.");
     const valid = new Set((await this.db.getPlayers(gameId)).map((p) => p.user_id));
     for (const m of members) if (!valid.has(m)) throw new UserError("Некоторых выбранных людей уже нет в игре.");
-    for (const r of await this.db.getRules(gameId)) {
-      if (r.members.length === members.size && r.members.every((m) => members.has(m)))
-        throw new UserError("Такое правило уже есть.");
-    }
+    const existing = await this.db.getRules(gameId);
+    const dup = existing.findIndex((r) => r.members.length === members.size && r.members.every((m) => members.has(m)));
+    if (dup >= 0) throw new UserError(`Такая группа уже есть в правилах (№${dup + 1}). Повторять её не нужно.`);
+    if (existing.length >= MAX_RULES) throw new UserError(`Слишком много правил (максимум ${MAX_RULES}).`);
     return this.db.addRule(gameId, [...members].sort((a, b) => a - b));
   }
   async deleteRule(gameId: number, organizerId: number, ruleId: number): Promise<void> {
@@ -139,7 +140,14 @@ export class Service {
     if (missing.length) throw new MissingWishesError(missing);
     const rules = (await this.db.getRules(gameId)).map((r) => r.members);
     const assignment = makeDraw(players, rules); // может бросить DrawImpossible
-    if (!(await this.db.saveDraw(gameId, assignment))) throw new UserError("Жеребьёвка уже проведена.");
+    if (!(await this.db.saveDraw(gameId, assignment))) {
+      const fresh = await this.db.getGame(gameId);
+      throw new UserError(
+        fresh && fresh.status === "open"
+          ? "Состав участников изменился во время жеребьёвки. Попробуйте ещё раз."
+          : "Жеребьёвка уже проведена.",
+      );
+    }
     return assignment;
   }
 }

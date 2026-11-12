@@ -58,6 +58,37 @@ async function showParts(ctx: Context, parts: string[], markup: Markup): Promise
 export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   const svc = new Service(db);
 
+  // Любая ошибка обработчика: сообщаем пользователю и отвечаем Telegram успехом. Иначе webhook вернёт 500,
+  // а Telegram будет повторять то же обновление (подарок добавился бы дважды). bot.catch для webhook не вызывается.
+  bot.use(async (ctx, next) => {
+    try {
+      await next();
+    } catch (err) {
+      console.error("handler error", err);
+      try {
+        const text = "Что-то пошло не так. Попробуйте ещё раз чуть позже.";
+        if (ctx.callbackQuery) await ctx.answerCallbackQuery({ text, show_alert: true });
+        else await ctx.reply(text);
+      } catch {
+        /* отправить не получилось — ничего не поделать */
+      }
+    }
+  });
+
+  // Бот работает только в личных сообщениях: в группе меню и пары увидели бы все участники чата.
+  bot.use(async (ctx, next) => {
+    if (ctx.chat && ctx.chat.type !== "private") {
+      if (ctx.callbackQuery) {
+        await ctx.answerCallbackQuery({ text: "Я работаю только в личных сообщениях.", show_alert: true });
+      } else if (ctx.message?.text?.startsWith("/")) {
+        await ctx.reply(`Я работаю только в личных сообщениях: https://t.me/${ctx.me.username}`);
+      }
+      return;
+    }
+    if (!ctx.from) return;
+    await next();
+  });
+
   // ------------------------------------------------------------ экраны
   async function screenGames(ctx: Context, uid: number, forceList = false): Promise<void> {
     const games = await db.gamesOfUser(uid);
@@ -90,28 +121,27 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   async function screenPlayers(ctx: Context, uid: number, gid: number): Promise<void> {
     const game = await svc.gameForOrganizer(gid, uid);
     const plist = await db.getPlayers(gid);
-    const lines = plist.map((p, i) => `${i + 1}. ${e(p.name)}${p.user_id === game.organizer_id ? " 👑" : ""}`);
+    const lines = plist.map((p, i) => `${i + 1}. ${t.listName(p.name)}${p.user_id === game.organizer_id ? " 👑" : ""}`);
     const open = game.status === "open";
-    let text = `👥 <b>Участники</b> (${plist.length})\n\n${lines.join("\n")}`;
-    if (open) text += "\n\nМожно убрать участника до жеребьёвки.";
-    await show(ctx, text, kb.players(gid, plist, game.organizer_id, open));
+    const parts = t.splitParts(`👥 <b>Участники</b> (${plist.length})\n`, lines, open ? "\n\nМожно убрать участника до жеребьёвки." : "");
+    await showParts(ctx, parts, kb.players(gid, plist, game.organizer_id, open));
   }
 
   async function screenRules(ctx: Context, uid: number, gid: number): Promise<void> {
     const game = await svc.gameForOrganizer(gid, uid);
     const names = new Map((await db.getPlayers(gid)).map((p) => [p.user_id, p.name]));
     const rules = await db.getRules(gid);
-    let text =
-      "🚫 <b>Правила «кто кому не дарит»</b>\nПравило — группа от 2 человек (например, живут вместе): внутри группы никто никому не достаётся.\n\n";
+    const text =
+      "🚫 <b>Правила «кто кому не дарит»</b>\nПравило — группа от 2 человек (например, живут вместе): внутри группы никто никому не достаётся.\n";
     const label = (members: number[]) => members.map((m) => names.get(m) ?? "?").join(", ");
-    text += rules.length
-      ? rules.map((r, i) => `${i + 1}. ${e(label(r.members))}`).join("\n") +
-        (game.status === "open" ? "\n\nЧтобы удалить правило, нажмите на него ниже." : "")
-      : "<i>Правил пока нет.</i>";
-    await show(
+    const open = game.status === "open";
+    const lines = rules.length
+      ? rules.map((r, i) => `${i + 1}. ${r.members.map((m) => t.listName(names.get(m) ?? "?")).join(", ")}`)
+      : ["<i>Правил пока нет.</i>"];
+    await showParts(
       ctx,
-      text,
-      kb.rules(gid, rules.map((r) => ({ id: r.id, label: label(r.members) })), game.status === "open"),
+      t.splitParts(text, lines, rules.length && open ? "\n\nЧтобы удалить правило, нажмите на него ниже." : ""),
+      kb.rules(gid, rules.map((r) => ({ id: r.id, label: label(r.members) })), open),
     );
   }
 
@@ -266,7 +296,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   });
   async function showMissingWishes(ctx: Context, gid: number, missing: { name: string }[]): Promise<void> {
     const org = await db.getPlayer(gid, uidOf(ctx));
-    await show(ctx, t.missingWishes(missing.map((p) => p.name), org?.name), kb.backManage(gid));
+    await showParts(ctx, t.missingWishesParts(missing.map((p) => p.name), org?.name), kb.backManage(gid));
   }
   route("md", 1, async (ctx, gid) => {
     const game = await svc.organizerOpenGame(gid, uidOf(ctx));
@@ -313,7 +343,18 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
         }),
       );
     }
-    await outbox.send(messages);
+    try {
+      await outbox.send(messages);
+    } catch (err) {
+      console.error("outbox failed", err);
+      await show(
+        ctx,
+        "✅ Жеребьёвка проведена и сохранена, но рассылку личных сообщений отправить не удалось. " +
+          "Попросите участников открыть бота и нажать «🎯 Кому я дарю» в меню игры: пара у каждого уже есть.",
+        kb.backManage(gid),
+      );
+      return;
+    }
     await show(
       ctx,
       "🎉 Жеребьёвка проведена! Участникам рассылаются личные сообщения со своей парой — это занимает несколько секунд. " +

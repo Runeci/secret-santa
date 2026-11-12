@@ -97,11 +97,15 @@ export class Database {
   }
 
   // --- участники -------------------------------------------------------
-  async addPlayer(gameId: number, userId: number, name: string): Promise<void> {
-    await this.d
-      .prepare("INSERT INTO players(game_id, user_id, name, joined_at) VALUES (?,?,?,?)")
-      .bind(gameId, userId, name, now())
+  /** Добавляет участника, только если игра ещё открыта (атомарно). false — игра уже разыграна. */
+  async addPlayer(gameId: number, userId: number, name: string): Promise<boolean> {
+    const r = await this.d
+      .prepare(
+        "INSERT INTO players(game_id, user_id, name, joined_at) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM games WHERE id = ? AND status = 'open')",
+      )
+      .bind(gameId, userId, name, now(), gameId)
       .run();
+    return r.meta.changes > 0;
   }
   async updatePlayerName(userId: number, name: string): Promise<void> {
     await this.d.prepare("UPDATE players SET name = ? WHERE user_id = ? AND name <> ?").bind(name, userId, name).run();
@@ -208,23 +212,39 @@ export class Database {
   }
 
   // --- жеребьёвка ------------------------------------------------------
-  /** Атомарно сохраняет результат и закрывает игру. false, если уже разыграна. */
+  /**
+   * Атомарно сохраняет результат и закрывает игру. false — ничего не сохранено: игра уже разыграна
+   * или состав участников изменился с момента жеребьёвки (кто-то вступил/вышел).
+   * Все условия проверяются в одной транзакции до изменения статуса игры.
+   */
   async saveDraw(gameId: number, assignment: Map<number, number>): Promise<boolean> {
+    const expected = assignment.size;
+    const unchanged = "EXISTS (SELECT 1 FROM games WHERE id = ? AND status = 'open') AND (SELECT COUNT(*) FROM players WHERE game_id = ?) = ?";
     const stmts = [
-      this.d.prepare("UPDATE games SET status = 'drawn' WHERE id = ? AND status = 'open'").bind(gameId),
       ...[...assignment].map(([giver, receiver]) =>
         this.d
-          .prepare("INSERT INTO assignments(game_id, giver_id, receiver_id) VALUES (?,?,?)")
-          .bind(gameId, giver, receiver),
+          .prepare(
+            `INSERT INTO assignments(game_id, giver_id, receiver_id) SELECT ?,?,? WHERE ${unchanged}
+             AND EXISTS (SELECT 1 FROM players WHERE game_id = ? AND user_id = ?)`,
+          )
+          .bind(gameId, giver, receiver, gameId, gameId, expected, gameId, giver),
       ),
+      this.d
+        .prepare(
+          `UPDATE games SET status = 'drawn' WHERE id = ? AND status = 'open'
+           AND (SELECT COUNT(*) FROM players WHERE game_id = ?) = ?
+           AND (SELECT COUNT(*) FROM assignments WHERE game_id = ?) = ?`,
+        )
+        .bind(gameId, gameId, expected, gameId, expected),
     ];
-    try {
-      // batch атомарен: если игра уже разыграна, вставка нарушит PRIMARY KEY и всё откатится.
-      await this.d.batch(stmts);
-      return true;
-    } catch {
-      return false;
-    }
+    const res = await this.d.batch(stmts);
+    if (res[res.length - 1].meta.changes === 1) return true;
+    // Отказ: убираем возможные частично вставленные пары (у открытой игры законных пар быть не может).
+    await this.d
+      .prepare("DELETE FROM assignments WHERE game_id = ? AND EXISTS (SELECT 1 FROM games WHERE id = ? AND status = 'open')")
+      .bind(gameId, gameId)
+      .run();
+    return false;
   }
   async getReceiver(gameId: number, giverId: number): Promise<number | null> {
     const r = await this.d

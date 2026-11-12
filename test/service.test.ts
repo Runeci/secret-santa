@@ -200,3 +200,47 @@ describe("удаление игры", () => {
     expect((await svc.db.gamesOfUser(ORG)).map((g) => g.id)).toEqual([other.id]);
   });
 });
+
+describe("гонки при жеребьёвке и вступлении", () => {
+  it("сохранение жеребьёвки отклоняется, если состав участников изменился", async () => {
+    await join(2, 3);
+    // жеребьёвка посчитана для троих, а к моменту сохранения вступил четвёртый
+    const stale = new Map([[1, 2], [2, 3], [3, 1]]);
+    await join(4);
+    expect(await svc.db.saveDraw(game.id, stale)).toBe(false);
+    expect((await svc.db.getGame(game.id))!.status).toBe("open");
+    expect((await svc.db.getAssignments(game.id)).size).toBe(0);
+  });
+  it("сохранение отклоняется, если в результате чужой участник", async () => {
+    await join(2, 3);
+    expect(await svc.db.saveDraw(game.id, new Map([[1, 2], [2, 3], [99, 1]]))).toBe(false);
+    expect((await svc.db.getAssignments(game.id)).size).toBe(0);
+    expect((await svc.db.getGame(game.id))!.status).toBe("open");
+  });
+  it("вступление в уже разыгранную игру невозможно даже при устаревшей проверке статуса", async () => {
+    await join(2, 3);
+    await draw();
+    expect(await svc.db.addPlayer(game.id, 9, "late")).toBe(false);
+    expect(await svc.db.isPlayer(game.id, 9)).toBe(false);
+  });
+  it("runDraw при смене состава говорит об этом, а не «уже проведена»", async () => {
+    await join(2, 3);
+    await wishAll();
+    const real = svc.db.saveDraw.bind(svc.db);
+    svc.db.saveDraw = async (gid, a) => {
+      await join(4); // кто-то вступил между подсчётом и сохранением
+      return real(gid, a);
+    };
+    await expect(svc.runDraw(game.id, ORG)).rejects.toThrow(/Состав участников изменился/);
+    expect((await svc.db.getGame(game.id))!.status).toBe("open");
+  });
+  it("лимит числа правил", async () => {
+    await join(2, 3, 4, 5, 6, 7, 8);
+    const groups: number[][] = [];
+    for (let a = 1; a <= 8; a++) for (let b = a + 1; b <= 8; b++) groups.push([a, b]); // 28 пар
+    groups.push([1, 2, 3], [4, 5, 6], [6, 7, 8]); // всего 31 разных групп
+    for (const g of groups.slice(0, config.MAX_RULES)) await svc.createRule(game.id, ORG, new Set(g));
+    await expect(svc.createRule(game.id, ORG, new Set(groups[config.MAX_RULES]))).rejects.toThrow(/максимум/);
+    expect((await svc.db.getRules(game.id)).length).toBe(config.MAX_RULES);
+  });
+});

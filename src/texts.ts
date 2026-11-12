@@ -1,6 +1,12 @@
 /** Тексты (parse_mode HTML). Всё пользовательское обязательно экранируется через e(). */
-import { MAX_WISHES, MAX_WISH_LEN } from "./config";
+import { MAX_NAME_LEN, MAX_WISHES, MAX_WISH_LEN } from "./config";
 import type { Game, Wish } from "./db";
+
+/** Сокращение по символам (эмодзи не режутся пополам). */
+export const cut = (text: string, n: number): string => {
+  const chars = [...text];
+  return chars.length <= n ? text : chars.slice(0, n).join("") + "…";
+};
 
 export const e = (s: unknown): string =>
   String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -16,15 +22,12 @@ export const STALE = "Эта кнопка устарела. Откройте м�
 export const NON_TEXT = "Пришлите, пожалуйста, обычное текстовое сообщение.";
 
 export function displayName(fullName: string, username?: string): string {
-  return username ? `${fullName} (@${username})` : fullName;
+  const name = cut(fullName.trim() || "Без имени", MAX_NAME_LEN);
+  return username ? `${name} (@${username})` : name;
 }
 
 const EMPTY = "<i>список пока пуст</i>";
 /** Сокращение по символам (эмодзи не режутся пополам). */
-const cut = (text: string, n: number): string => {
-  const chars = [...text];
-  return chars.length <= n ? text : chars.slice(0, n).join("") + "…";
-};
 
 /** Строки списка целиком (для Санты: ссылки нельзя сокращать). */
 export function wishLines(wishes: Wish[]): string[] {
@@ -90,15 +93,15 @@ export const assignmentParts = (title: string, receiverName: string, wishes: Wis
 export const wishesUpdatedParts = (receiverName: string, wishes: Wish[]): string[] =>
   splitParts(`🔔 <b>${e(receiverName)}</b> обновил(а) список желаний. Актуальный список:`, wishLines(wishes), "");
 
-/** Организатору: кто ещё не добавил ни одного подарка. */
-export function missingWishes(names: string[], organizerName?: string): string {
-  const MAX_SHOWN = 30;
-  const shown = names.slice(0, MAX_SHOWN).map((n) => `• ${e(n)}${n === organizerName ? " (вы)" : ""}`);
-  if (names.length > MAX_SHOWN) shown.push(`… и ещё ${names.length - MAX_SHOWN}`);
-  return (
-    "🎁 Жеребьёвку пока провести нельзя: не все добавили подарки. Ждём:\n\n" +
-    shown.join("\n") +
-    "\n\nПопросите их открыть бота и добавить хотя бы один подарок («➕ Добавить подарок» в меню игры), затем запустите жеребьёвку снова."
+/** Имя в списках: экранировано и ограничено, чтобы список из 50 человек помещался в сообщение. */
+export const listName = (n: string): string => e(cut(n, 60));
+
+/** Организатору: кто ещё не добавил ни одного подарка (при необходимости — в нескольких сообщениях). */
+export function missingWishesParts(names: string[], organizerName?: string): string[] {
+  return splitParts(
+    "🎁 Жеребьёвку пока провести нельзя: не все добавили подарки. Ждём:\n",
+    names.map((n) => `• ${listName(n)}${n === organizerName ? " (вы)" : ""}`),
+    "\n\nПопросите их открыть бота и добавить хотя бы один подарок («➕ Добавить подарок» в меню игры), затем запустите жеребьёвку снова.",
   );
 }
 

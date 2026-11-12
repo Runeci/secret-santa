@@ -25,9 +25,11 @@ interface Sent {
 export class Env {
   sent: Sent[] = [];
   alerts: string[] = [];
+  errors: unknown[] = []; // необработанные ошибки обработчиков (должны быть пусты)
   blocked = new Set<number>();
   db = new Database(createD1());
   bot: Bot;
+  outbox!: Outbox;
   private mid = 0;
   private uid = 0;
 
@@ -66,6 +68,7 @@ export class Env {
         for (const m of msgs) await deliver(this.bot.api, m);
       },
     };
+    this.outbox = outbox;
     registerHandlers(this.bot, this.db, outbox);
   }
 
@@ -86,6 +89,23 @@ export class Client {
   }
   private chat() {
     return { id: this.uid, type: "private" as const };
+  }
+
+  async sayInGroup(text: string, groupId = -1001) {
+    const entities = text.startsWith("/") ? [{ type: "bot_command", offset: 0, length: text.split(" ")[0].length }] : undefined;
+    await this.env.bot.handleUpdate({
+      update_id: this.env.nextId(),
+      message: { message_id: ++this.seq, date: 0, chat: { id: groupId, type: "supergroup", title: "G" }, from: this.from(), text, entities },
+    } as any);
+  }
+  async callbackInGroup(data: string, groupId = -1001) {
+    await this.env.bot.handleUpdate({
+      update_id: this.env.nextId(),
+      callback_query: {
+        id: String(this.env.nextId()), from: this.from(), chat_instance: "x", data,
+        message: { message_id: 1, date: 0, chat: { id: groupId, type: "supergroup", title: "G" } },
+      },
+    } as any);
   }
 
   async say(text: string) {

@@ -34,12 +34,28 @@ export async function deliver(api: Api, m: OutMsg): Promise<DeliverResult> {
   }
 }
 
+/** Лимиты Cloudflare Queues: до 100 сообщений и до 256 КБ в одной пачке (берём запас). */
+const BATCH_MESSAGES = 100;
+const BATCH_BYTES = 200_000;
+
 export function queueOutbox(queue: { sendBatch(m: { body: OutMsg }[]): Promise<unknown> }): Outbox {
+  const enc = new TextEncoder();
   return {
     async send(messages) {
-      for (let i = 0; i < messages.length; i += 100) {
-        await queue.sendBatch(messages.slice(i, i + 100).map((body) => ({ body })));
+      let batch: { body: OutMsg }[] = [];
+      let bytes = 0;
+      const flush = async () => {
+        if (batch.length) await queue.sendBatch(batch);
+        batch = [];
+        bytes = 0;
+      };
+      for (const body of messages) {
+        const size = enc.encode(JSON.stringify(body)).length + 64;
+        if (batch.length >= BATCH_MESSAGES || (batch.length && bytes + size > BATCH_BYTES)) await flush();
+        batch.push({ body });
+        bytes += size;
       }
+      await flush();
     },
   };
 }
