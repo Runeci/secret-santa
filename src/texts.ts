@@ -19,9 +19,42 @@ export function displayName(fullName: string, username?: string): string {
   return username ? `${fullName} (@${username})` : fullName;
 }
 
+const EMPTY = "<i>список пока пуст</i>";
+/** Сокращение по символам (эмодзи не режутся пополам). */
+const cut = (text: string, n: number): string => {
+  const chars = [...text];
+  return chars.length <= n ? text : chars.slice(0, n).join("") + "…";
+};
+
+/** Строки списка целиком (для Санты: ссылки нельзя сокращать). */
+export function wishLines(wishes: Wish[]): string[] {
+  return wishes.length ? wishes.map((w, i) => `${i + 1}. ${e(w.text)}`) : [EMPTY];
+}
+
 export function wishlist(wishes: Wish[]): string {
-  if (!wishes.length) return "<i>список пока пуст</i>";
-  return wishes.map((w, i) => `${i + 1}. ${e(w.text)}`).join("\n");
+  return wishLines(wishes).join("\n");
+}
+
+/** Потолок сообщения Telegram — 4096 символов; берём с запасом. */
+export const PART_LIMIT = 3800;
+
+/** Собирает текст из шапки, строк и подвала, разбивая на несколько сообщений, если не влезает. */
+export function splitParts(header: string, lines: string[], footer: string, limit = PART_LIMIT): string[] {
+  const parts: string[] = [];
+  let cur = header;
+  for (const line of lines) {
+    if (cur && cur.length + 1 + line.length > limit) {
+      parts.push(cur);
+      cur = "<i>(продолжение списка)</i>";
+    }
+    cur += (cur ? "\n" : "") + line;
+  }
+  if (cur.length + footer.length > limit) {
+    parts.push(cur);
+    cur = "<i>(продолжение)</i>";
+  }
+  parts.push(cur + footer);
+  return parts;
 }
 
 export function gameMenu(game: Game, players: number, isOrg: boolean): string {
@@ -30,10 +63,15 @@ export function gameMenu(game: Game, players: number, isOrg: boolean): string {
   return `🎄 <b>${e(game.title)}</b>${role}\nУчастников: ${players} · ${status}`;
 }
 
+const PREVIEW_LEN = 150;
+
 export function myWishlist(wishes: Wish[], drawn: boolean): string {
-  const head = `📝 <b>Ваш список подарков</b> (${wishes.length}/${MAX_WISHES})\n\n${wishlist(wishes)}`;
+  const lines = wishes.length ? wishes.map((w, i) => `${i + 1}. ${e(cut(w.text, PREVIEW_LEN))}`) : [EMPTY];
+  const head = `📝 <b>Ваш список подарков</b> (${wishes.length}/${MAX_WISHES})\n\n${lines.join("\n")}`;
   if (!wishes.length) return head;
   let tail = "\n\nНажмите на пункт, чтобы изменить или удалить его.";
+  if (wishes.some((w) => [...w.text].length > PREVIEW_LEN))
+    tail += "\nДлинные пункты здесь сокращены: полный текст — на странице пункта.";
   if (drawn) tail += "\nВаш Санта получит уведомление об изменениях (анонимно).";
   return head + tail;
 }
@@ -41,15 +79,16 @@ export function myWishlist(wishes: Wish[], drawn: boolean): string {
 export const invite = (link: string): string =>
   `🔗 Ссылка-приглашение:\n${e(link)}\n\nОтправьте её тем, кто будет участвовать.`;
 
-export function assignment(title: string, receiverName: string, wishes: Wish[]): string {
-  return (
-    `🎁 <b>${e(title)}</b>\n\nВы — Тайный Санта для: <b>${e(receiverName)}</b>\n\n` +
-    `Что хочет получить:\n${wishlist(wishes)}\n\nЭто секрет — никому не рассказывайте 🤫`
+/** Сообщение Санте: список целиком, при необходимости в нескольких сообщениях. */
+export const assignmentParts = (title: string, receiverName: string, wishes: Wish[]): string[] =>
+  splitParts(
+    `🎁 <b>${e(title)}</b>\n\nВы — Тайный Санта для: <b>${e(receiverName)}</b>\n\nЧто хочет получить:`,
+    wishLines(wishes),
+    "\n\nЭто секрет — никому не рассказывайте 🤫",
   );
-}
 
-export const wishesUpdated = (receiverName: string, wishes: Wish[]): string =>
-  `🔔 <b>${e(receiverName)}</b> обновил(а) список желаний. Актуальный список:\n\n${wishlist(wishes)}`;
+export const wishesUpdatedParts = (receiverName: string, wishes: Wish[]): string[] =>
+  splitParts(`🔔 <b>${e(receiverName)}</b> обновил(а) список желаний. Актуальный список:`, wishLines(wishes), "");
 
 export const drawImpossible = (title: string): string =>
   `😔 С текущими правилами жеребьёвка в игре «${e(title)}» невозможна: не получается раздать подарки так, ` +

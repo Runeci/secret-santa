@@ -47,7 +47,7 @@ describe("полный сценарий", () => {
 
     // лимиты: слишком длинный текст, состояние сохраняется
     await bob.click("Добавить ещё");
-    await bob.say("x".repeat(301));
+    await bob.say("x".repeat(2001));
     expect(bob.last()).toContain("Слишком длинно");
     await bob.say("Чай");
     expect(bob.last()).toContain("Добавлено");
@@ -325,5 +325,92 @@ describe("удаление игры", () => {
     // у участника старые кнопки больше не работают
     await a.rawCallback(`g:${gid}`);
     expect(env.alerts.at(-1)).toContain("не участвуете");
+  });
+});
+
+describe("длинные списки и ссылки", () => {
+  const url = (n: number) => `https://shop.example/item?id=${n}&utm=a<b>&x=` + "z".repeat(1400);
+
+  it("длинная ссылка принимается; 20 длинных пунктов целиком доходят до Санты несколькими сообщениями", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "А"), b = env.user(3, "Б");
+    const code = await createGame(org);
+    for (const u of [a, b]) await u.say(`/start ${code}`);
+    const gid = (await env.db.getGameByCode(code))!.id;
+
+    await a.click("Добавить подарок");
+    await a.say(url(0));
+    expect(a.last()).toContain("Добавлено");
+    for (let i = 1; i < 20; i++) {
+      await a.click("Добавить ещё");
+      await a.say(url(i));
+      expect(a.last()).toContain("Добавлено");
+    }
+    // экран «Мой список» и сообщение после добавления помещаются в одно сообщение
+    await a.click("Мой список");
+    expect(a.last().length).toBeLessThanOrEqual(4096);
+    expect(a.last()).toContain("сокращены");
+    // полный текст пункта — на его карточке
+    await a.click("1.");
+    expect(a.last()).toContain(url(0).slice(0, 80));
+
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    await org.click("Запустить");
+    expect(org.last()).toContain("Жеребьёвка проведена");
+
+    const receiverOfSanta = new Map(await env.db.getAssignments(gid));
+    const santaOfA = [...receiverOfSanta].find(([, r]) => r === 2)![0];
+    const santa = env.user(santaOfA, "x");
+    const dm = env.sent.filter((s) => s.chat === santaOfA && /Тайный Санта для|продолжение/.test(plain(s.text)));
+    expect(dm.length).toBeGreaterThan(1); // список не влез в одно сообщение
+    for (const m of dm) expect(plain(m.text).length).toBeLessThanOrEqual(4096);
+    const all = dm.map((m) => plain(m.text)).join("\n");
+    for (let i = 0; i < 20; i++) expect(all).toContain(url(i)); // все ссылки целиком и по порядку
+    expect(dm.at(-1)!.markup).toBeTruthy(); // кнопка только на последней части
+    expect(dm.slice(0, -1).every((m) => !m.markup)).toBe(true);
+
+    // «Кому я дарю» тоже собирает весь список
+    const giver = santaOfA === 1 ? org : santaOfA === 3 ? b : a;
+    const before = env.sent.length;
+    await giver.say("/start");
+    await giver.click("Кому я дарю");
+    const shown = env.sent.slice(before).filter((s) => s.chat === santaOfA).map((s) => plain(s.text)).join("\n");
+    for (let i = 0; i < 20; i++) expect(shown).toContain(url(i));
+    void santa;
+
+    // после жеребьёвки правка тоже доходит целиком (несколько сообщений Санте)
+    const n = env.sent.length;
+    await a.say("/start");
+    await a.click("Мой список");
+    await a.click("1.");
+    await a.click("Изменить");
+    await a.say(url(99));
+    const upd = env.sent.slice(n).filter((s) => s.chat === santaOfA).map((s) => plain(s.text)).join("\n");
+    expect(upd).toContain(url(99));
+    expect(upd).toContain(url(19));
+  });
+
+  it("лимит одного пункта — 2000 символов", async () => {
+    const org = env.user(1, "Орг");
+    await createGame(org);
+    await org.click("Добавить подарок");
+    await org.say("x".repeat(2001));
+    expect(org.last()).toContain("Слишком длинно");
+    await org.say("x".repeat(2000));
+    expect(org.last()).toContain("Добавлено");
+  });
+});
+
+describe("меню участника", () => {
+  it("в меню игры нет «Создать игру»; создание — через «Мои игры»", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "А");
+    const code = await createGame(org);
+    await a.say(`/start ${code}`);
+    expect(a.hasButton("Создать игру")).toBe(false);
+    expect(a.hasButton("Мои игры")).toBe(true);
+    await a.click("Мои игры");
+    expect(a.hasButton("Создать игру")).toBe(true);
+    await a.click("Создать игру");
+    expect(a.last()).toContain("назовём");
   });
 });

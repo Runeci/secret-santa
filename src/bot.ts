@@ -42,6 +42,18 @@ async function show(ctx: Context, text: string, markup?: Markup): Promise<void> 
   }
 }
 
+/** Показывает текст из нескольких частей: первая правит/заменяет экран, последняя получает клавиатуру. */
+async function showParts(ctx: Context, parts: string[], markup: Markup): Promise<void> {
+  if (parts.length === 1) return show(ctx, parts[0], markup);
+  await show(ctx, parts[0]);
+  for (let i = 1; i < parts.length; i++) {
+    await ctx.api.sendMessage(ctx.from!.id, parts[i], {
+      parse_mode: HTML,
+      reply_markup: i === parts.length - 1 ? markup : undefined,
+    });
+  }
+}
+
 /** Регистрирует все обработчики на переданном боте. */
 export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   const svc = new Service(db);
@@ -57,12 +69,8 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   async function screenGame(ctx: Context, uid: number, gid: number): Promise<void> {
     const game = await svc.gameForPlayer(gid, uid);
     const isOrg = game.organizer_id === uid;
-    const [players, wishes, games] = await Promise.all([
-      db.getPlayers(gid),
-      db.getWishes(gid, uid),
-      db.gamesOfUser(uid),
-    ]);
-    await show(ctx, t.gameMenu(game, players.length, isOrg), kb.gameMenu(game, isOrg, wishes.length, games.length > 1));
+    const [players, wishes] = await Promise.all([db.getPlayers(gid), db.getWishes(gid, uid)]);
+    await show(ctx, t.gameMenu(game, players.length, isOrg), kb.gameMenu(game, isOrg, wishes.length));
   }
 
   async function screenWishlist(ctx: Context, uid: number, gid: number): Promise<void> {
@@ -106,7 +114,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const target = await db.getReceiver(gid, uid);
     if (game.status !== "drawn" || target === null) throw new UserError("Жеребьёвка ещё не проведена.");
     const player = (await db.getPlayer(gid, target))!;
-    await show(ctx, t.assignment(game.title, player.name, await db.getWishes(gid, target)), kb.back(gid));
+    await showParts(ctx, t.assignmentParts(game.title, player.name, await db.getWishes(gid, target)), kb.back(gid));
   }
 
   /** Если жеребьёвка была, анонимно сообщаем Санте об изменении списка. */
@@ -114,7 +122,9 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const santa = await svc.santaOf(gid, uid);
     if (santa === null) return;
     const player = (await db.getPlayer(gid, uid))!;
-    await safeSend(ctx, santa, t.wishesUpdated(player.name, await db.getWishes(gid, uid)));
+    for (const part of t.wishesUpdatedParts(player.name, await db.getWishes(gid, uid))) {
+      if (!(await safeSend(ctx, santa, part))) break;
+    }
   }
 
   async function inviteLink(ctx: Context, code: string): Promise<string> {
@@ -274,15 +284,21 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const players = new Map((await db.getPlayers(gid)).map((p) => [p.user_id, p.name]));
     const messages: OutMsg[] = [];
     for (const [giver, receiver] of assignment) {
-      messages.push({
-        chat: giver,
-        text: t.assignment(game.title, players.get(receiver)!, await db.getWishes(gid, receiver)),
-        markup: kb.back(gid),
-        failNotify: {
-          chat: game.organizer_id,
-          text: `⚠️ Не удалось доставить пару участнику ${e(players.get(giver)!)}. Пусть откроет бота и нажмёт «🎯 Кому я дарю» в меню игры.`,
-        },
-      });
+      const parts = t.assignmentParts(game.title, players.get(receiver)!, await db.getWishes(gid, receiver));
+      parts.forEach((text, i) =>
+        messages.push({
+          chat: giver,
+          text,
+          markup: i === parts.length - 1 ? kb.back(gid) : undefined,
+          failNotify:
+            i === 0
+              ? {
+                  chat: game.organizer_id,
+                  text: `⚠️ Не удалось доставить пару участнику ${e(players.get(giver)!)}. Пусть откроет бота и нажмёт «🎯 Кому я дарю» в меню игры.`,
+                }
+              : undefined,
+        }),
+      );
     }
     await outbox.send(messages);
     await show(

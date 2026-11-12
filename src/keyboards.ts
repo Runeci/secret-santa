@@ -15,7 +15,7 @@ function short(text: string, n = 40): string {
 export const gamesList = (games: Game[]): Markup =>
   kb(...games.map((g) => [btn(`🎄 ${short(g.title)}`, `g:${g.id}`)]), [btn("➕ Создать игру", "new")]);
 
-export function gameMenu(game: Game, isOrg: boolean, wishCount: number, multi: boolean): Markup {
+export function gameMenu(game: Game, isOrg: boolean, wishCount: number): Markup {
   const gid = game.id;
   const drawn = game.status === "drawn";
   const rows: Button[][] = [
@@ -25,7 +25,7 @@ export function gameMenu(game: Game, isOrg: boolean, wishCount: number, multi: b
   if (drawn) rows.push([btn("🎯 Кому я дарю", `to:${gid}`)]);
   if (isOrg) rows.push([btn("⚙️ Управление игрой", `m:${gid}`)]);
   else if (!drawn) rows.push([btn("🚪 Выйти из игры", `lv:${gid}`)]);
-  rows.push([multi ? btn("⬅️ Мои игры", "menu") : btn("➕ Создать игру", "new")]);
+  rows.push([btn("⬅️ Мои игры", "menu")]); // создание игры — на экране «Мои игры» и по /new
   return kb(...rows);
 }
 
