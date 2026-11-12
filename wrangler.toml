@@ -1,0 +1,22 @@
+name = "secret-santa-bot"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# Вставьте database_id, который выдаст `npx wrangler d1 create secret-santa`
+[[d1_databases]]
+binding = "DB"
+database_name = "secret-santa"
+database_id = "REPLACE_WITH_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Очередь для рассылки пар (бесплатный план: 50 внешних запросов на вызов,
+# поэтому личные сообщения отправляются пачками по 10 из очереди).
+[[queues.producers]]
+binding = "OUTBOX"
+queue = "santa-outbox"
+
+[[queues.consumers]]
+queue = "santa-outbox"
+max_batch_size = 10
+max_batch_timeout = 1
+max_retries = 4

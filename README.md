@@ -1,68 +1,90 @@
-# 🎅 Тайный Санта — Telegram-бот
+# 🎅 Тайный Санта — Telegram-бот на Cloudflare Workers
 
-Python 3.12+, aiogram 3, SQLite. Работает через long polling (домен и HTTPS не нужны).
+TypeScript, [grammY](https://grammy.dev), Cloudflare Workers + D1 (SQLite) + Queues. Работает через
+webhook, не засыпает, помещается в бесплатный тариф Cloudflare. Банковская карта не нужна.
 
-## Запуск
+> Рядом лежит `python-oracle/` — первая версия на Python/aiogram для обычного сервера (VPS).
+> Для Cloudflare она не нужна.
 
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env     # впишите BOT_TOKEN от @BotFather
-export $(grep -v '^#' .env | xargs)
-python -m santa_bot
-```
+## Развёртывание (около 15 минут)
 
-База — один файл (`DB_PATH`, по умолчанию `santa.db`); делайте его бэкап.
-Незаконченный ввод (название игры, текст подарка) хранится в памяти и сбрасывается при перезапуске бота.
-
-## Тесты
+Понадобятся: аккаунт Cloudflare, Node.js 20+ и токен от @BotFather.
 
 ```bash
-pip install -r requirements-dev.txt
-pytest
+npm install
+npx wrangler login
 ```
 
-## Как это устроено
+1. **База данных.** Создайте её и вставьте выданный `database_id` в `wrangler.toml`:
+   ```bash
+   npx wrangler d1 create secret-santa
+   ```
+2. **Очередь** (для рассылки пар после жеребьёвки):
+   ```bash
+   npx wrangler queues create santa-outbox
+   ```
+3. **Таблицы:**
+   ```bash
+   npx wrangler d1 migrations apply secret-santa --remote
+   ```
+4. **Деплой.** В конце команда напечатает адрес вида `https://secret-santa-bot.<поддомен>.workers.dev`:
+   ```bash
+   npx wrangler deploy
+   ```
+5. **Секреты.** Токен бота и случайная строка для защиты webhook (команда спросит значение):
+   ```bash
+   npx wrangler secret put BOT_TOKEN
+   ```
+   ```bash
+   openssl rand -hex 16
+   ```
+   ```bash
+   npx wrangler secret put WEBHOOK_SECRET
+   ```
+   (во второй команде вставьте строку, которую вывела `openssl`; запомните её — она нужна в шаге 6)
+6. **Подключить Telegram к Worker** (значения подставьте свои):
+   ```bash
+   BOT_TOKEN=... WEBHOOK_SECRET=... WORKER_URL=https://secret-santa-bot.<поддомен>.workers.dev bash scripts/set-webhook.sh
+   ```
+   В ответе должно быть `"ok":true` и ваш адрес в `getWebhookInfo`.
+7. Откройте бота в Telegram и отправьте `/start`.
+
+Обновление после изменений: `npx wrangler deploy`. Логи: `npx wrangler tail`.
+
+## Разработка и тесты
+
+```bash
+npm test            # 117 тестов: жеребьёвка, правила игры, сценарии бота с фейковым Telegram
+npm run typecheck
+npm run smoke       # реальный runtime Workers локально: webhook + D1 + очередь, Telegram подменён
+```
+
+## Устройство
 
 | Файл | Назначение |
 |---|---|
-| `santa_bot/draw.py` | жеребьёвка: чистая функция без Telegram и БД |
-| `santa_bot/db.py` | схема SQLite и запросы |
-| `santa_bot/service.py` | правила игры и проверки прав (организатор/участник, лимиты) |
-| `santa_bot/handlers.py` | диалоги и inline-кнопки |
-| `santa_bot/keyboards.py`, `texts.py` | клавиатуры и русские тексты |
-| `tests/` | алгоритм, сервис и сквозные сценарии с фейковым Telegram |
+| `src/draw.ts` | жеребьёвка (чистая функция) |
+| `src/db.ts` | запросы к D1 |
+| `src/service.ts` | правила игры, права организатора/участника, лимиты |
+| `src/bot.ts` | экраны, кнопки, диалоги |
+| `src/outbox.ts` | рассылка личных сообщений через очередь |
+| `src/index.ts` | точка входа Worker: webhook и потребитель очереди |
+| `migrations/` | схема базы |
 
-**Жеребьёвка.** Сначала точная проверка, что решение существует (паросочетание в двудольном
-графе). Потом случайный поиск с возвратом с бюджетом взаимных пар 0, 1, 2… — взаимные пары
-появляются, только если иначе никак. Если решения нет, организатору предлагается удалить правила.
+**Состояние диалога** (ввод названия, подарка, выбор группы для правила) хранится в таблице `user_state`:
+Worker не помнит ничего между запросами.
 
-**Лимиты** (в `santa_bot/config.py`): 20 пунктов, 300 символов, минимум 3 участника,
-максимум 50 участников в игре (чтобы клавиатуры помещались в лимит Telegram).
+**Рассылка пар.** На бесплатном тарифе Worker делает не больше 50 внешних запросов за вызов, а на
+50 участников нужно 50 личных сообщений. Поэтому пары кладутся в очередь Cloudflare, а потребитель
+отправляет их пачками по 10, с повтором при лимитах Telegram. Если кому-то доставить не удалось
+(заблокировал бота), организатор получает предупреждение без раскрытия пар, а сам человек может
+нажать «🎯 Кому я дарю».
 
-**Приватность.** Пары хранятся в таблице `assignments`; интерфейс показывает каждому только
-его собственную пару, включая организатора. Администратор сервера с доступом к файлу БД
-технически может их прочитать.
+**Жеребьёвка.** Сначала точная проверка, что решение существует. Потом поиск с возвратом с бюджетом
+взаимных пар 0, 1, 2… — они появляются, только если иначе никак. Поиск ограничен по шагам из-за
+лимита 10 мс процессорного времени на бесплатном тарифе.
 
-## Бесплатный хостинг: Oracle Cloud Always Free
+**Лимиты** (`src/config.ts`): 20 пунктов, 300 символов, минимум 3 участника, максимум 50.
 
-Бот на long polling должен работать постоянно, поэтому подходит виртуальная машина, а не
-«засыпающий» веб-тариф. Oracle Always Free даёт такую VM бесплатно (нужна банковская карта
-для верификации; списаний на Always Free нет). Актуальные лимиты проверьте в консоли OCI.
-
-1. Зарегистрируйтесь на cloud.oracle.com, создайте инстанс: образ Ubuntu 24.04, shape
-   `VM.Standard.A1.Flex` (1 OCPU / 6 ГБ достаточно) или `VM.Standard.E2.1.Micro`.
-   Порты открывать не нужно: бот сам обращается к Telegram, входящих соединений нет.
-   Если «Out of capacity» — повторите позже или попробуйте другой домен доступности.
-2. Подключитесь по SSH, склонируйте репозиторий и установите:
-   ```bash
-   git clone https://github.com/Runeci/secret-santa.git && cd secret-santa
-   git checkout claude/magical-bardeen-o3ltqa
-   sudo bash deploy/install.sh
-   sudo nano /etc/santa-bot.env        # BOT_TOKEN=...
-   sudo systemctl restart santa-bot
-   journalctl -u santa-bot -f          # логи
-   ```
-3. База лежит в `/var/lib/santa-bot/santa.db` — периодически копируйте её себе.
-
-Обновление: `git pull && sudo bash deploy/install.sh && sudo systemctl restart santa-bot`.
+**Приватность.** Пары хранятся в таблице `assignments`; интерфейс показывает каждому только его
+собственную пару, включая организатора. Владелец аккаунта Cloudflare технически может прочитать базу.
