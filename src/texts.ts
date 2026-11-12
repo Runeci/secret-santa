@@ -90,6 +90,18 @@ export const assignmentParts = (title: string, receiverName: string, wishes: Wis
 export const wishesUpdatedParts = (receiverName: string, wishes: Wish[]): string[] =>
   splitParts(`🔔 <b>${e(receiverName)}</b> обновил(а) список желаний. Актуальный список:`, wishLines(wishes), "");
 
+/** Организатору: кто ещё не добавил ни одного подарка. */
+export function missingWishes(names: string[], organizerName?: string): string {
+  const MAX_SHOWN = 30;
+  const shown = names.slice(0, MAX_SHOWN).map((n) => `• ${e(n)}${n === organizerName ? " (вы)" : ""}`);
+  if (names.length > MAX_SHOWN) shown.push(`… и ещё ${names.length - MAX_SHOWN}`);
+  return (
+    "🎁 Жеребьёвку пока провести нельзя: не все добавили подарки. Ждём:\n\n" +
+    shown.join("\n") +
+    "\n\nПопросите их открыть бота и добавить хотя бы один подарок («➕ Добавить подарок» в меню игры), затем запустите жеребьёвку снова."
+  );
+}
+
 export const drawImpossible = (title: string): string =>
   `😔 С текущими правилами жеребьёвка в игре «${e(title)}» невозможна: не получается раздать подарки так, ` +
   "чтобы никто не достался себе или человеку из своей группы.\n\n" +

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import * as config from "../src/config";
 import { Database, type Game } from "../src/db";
-import { DrawImpossible, Service, UserError } from "../src/service";
+import { DrawImpossible, MissingWishesError, Service, UserError } from "../src/service";
 import { createD1 } from "./helpers/d1";
 
 const ORG = 1;
@@ -10,6 +10,16 @@ let game: Game;
 
 async function join(...uids: number[]) {
   for (const u of uids) expect((await svc.join(game.code, u, `U${u}`)).result).toBe("joined");
+}
+
+/** Всем участникам без подарков добавляет по одному (жеребьёвка требует подарки у всех). */
+async function wishAll() {
+  for (const p of await svc.db.getPlayers(game.id))
+    if (!(await svc.db.getWishes(game.id, p.user_id)).length) await svc.db.addWish(game.id, p.user_id, "подарок");
+}
+async function draw() {
+  await wishAll();
+  return svc.runDraw(game.id, ORG);
 }
 
 beforeEach(async () => {
@@ -88,6 +98,34 @@ describe("правила и удаление участников", () => {
   });
 });
 
+describe("жеребьёвка: подарки у всех", () => {
+  it("пока кто-то без подарка — нельзя, ошибка называет этих людей; игра остаётся открытой", async () => {
+    await join(2, 3);
+    await svc.addWish(game.id, 2, "книга");
+    const err = await svc.runDraw(game.id, ORG).catch((e) => e);
+    expect(err).toBeInstanceOf(MissingWishesError);
+    expect(err.missing.map((p: { name: string }) => p.name)).toEqual(["Орг", "U3"]);
+    expect((await svc.db.getGame(game.id))!.status).toBe("open");
+    await svc.addWish(game.id, ORG, "кофе");
+    await svc.addWish(game.id, 3, "чай");
+    await svc.runDraw(game.id, ORG); // теперь можно
+  });
+  it("после удаления подарка у человека жеребьёвка снова блокируется", async () => {
+    await join(2, 3);
+    await wishAll();
+    const wid = (await svc.db.getWishes(game.id, 2))[0].id;
+    await svc.deleteWish(game.id, 2, wid);
+    await expect(svc.runDraw(game.id, ORG)).rejects.toBeInstanceOf(MissingWishesError);
+  });
+  it("участник, убранный из игры, больше не мешает", async () => {
+    await join(2, 3, 4);
+    await wishAll();
+    await svc.db.removePlayer(game.id, 4);
+    await svc.db.addWish(game.id, 4, "x"); // мусор не должен влиять
+    await svc.runDraw(game.id, ORG);
+  });
+});
+
 describe("жеребьёвка", () => {
   it("нужно минимум трое", async () => {
     await join(2);
@@ -96,27 +134,27 @@ describe("жеребьёвка", () => {
   it("только организатор и только один раз", async () => {
     await join(2, 3);
     await expect(svc.runDraw(game.id, 2)).rejects.toThrow(UserError);
-    const a = await svc.runDraw(game.id, ORG);
+    const a = await draw();
     expect(await svc.db.getAssignments(game.id)).toEqual(a);
-    await expect(svc.runDraw(game.id, ORG)).rejects.toThrow(UserError);
+    await expect(draw()).rejects.toThrow(UserError);
   });
   it("повторное сохранение результата откатывается целиком", async () => {
     await join(2, 3);
-    const a = await svc.runDraw(game.id, ORG);
+    const a = await draw();
     expect(await svc.db.saveDraw(game.id, new Map([[1, 2], [2, 3], [3, 1]]))).toBe(false);
     expect(await svc.db.getAssignments(game.id)).toEqual(a);
   });
   it("невозможная жеребьёвка оставляет игру открытой", async () => {
     await join(2, 3);
     await svc.createRule(game.id, ORG, new Set([1, 2, 3]));
-    await expect(svc.runDraw(game.id, ORG)).rejects.toThrow(DrawImpossible);
+    await expect(draw()).rejects.toThrow(DrawImpossible);
     expect((await svc.db.getGame(game.id))!.status).toBe("open");
     await svc.deleteRule(game.id, ORG, (await svc.db.getRules(game.id))[0].id);
-    await svc.runDraw(game.id, ORG);
+    await draw();
   });
   it("после жеребьёвки: вход, правила, удаление и выход закрыты, подарки редактируются", async () => {
     await join(2, 3);
-    await svc.runDraw(game.id, ORG);
+    await draw();
     expect((await svc.join(game.code, 9, "late")).result).toBe("closed");
     await expect(svc.createRule(game.id, ORG, new Set([2, 3]))).rejects.toThrow(UserError);
     await expect(svc.removePlayer(game.id, ORG, 2)).rejects.toThrow(UserError);
@@ -128,7 +166,7 @@ describe("жеребьёвка", () => {
   it("santaOf находит дарителя", async () => {
     await join(2, 3);
     expect(await svc.santaOf(game.id, 2)).toBeNull();
-    const a = await svc.runDraw(game.id, ORG);
+    const a = await draw();
     for (const [giver, receiver] of a) expect(await svc.santaOf(game.id, receiver)).toBe(giver);
   });
   it("лимит участников", async () => {
@@ -144,7 +182,7 @@ describe("удаление игры", () => {
     await join(2, 3, 4);
     await svc.addWish(game.id, 2, "книга");
     await svc.createRule(game.id, ORG, new Set([2, 3]));
-    await svc.runDraw(game.id, ORG);
+    await draw();
     const other = await svc.createGame("Другая", ORG, "Орг");
     await svc.addWish(other.id, ORG, "сохранить");
 

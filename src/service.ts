@@ -7,6 +7,13 @@ export { DrawImpossible };
 /** Ошибка, текст которой можно показать пользователю как есть. */
 export class UserError extends Error {}
 
+/** Жеребьёвка невозможна, пока не все добавили подарки. */
+export class MissingWishesError extends UserError {
+  constructor(public missing: Player[]) {
+    super("Не все участники добавили подарки.");
+  }
+}
+
 export type JoinResult = "joined" | "already" | "closed" | "full" | "not_found";
 
 export function cleanText(text: string | undefined | null, limit: number, what: string): string {
@@ -128,6 +135,8 @@ export class Service {
     await this.organizerOpenGame(gameId, organizerId);
     const players = (await this.db.getPlayers(gameId)).map((p) => p.user_id);
     if (players.length < MIN_PLAYERS) throw new UserError(`Для жеребьёвки нужно минимум ${MIN_PLAYERS} участника.`);
+    const missing = await this.db.playersWithoutWishes(gameId);
+    if (missing.length) throw new MissingWishesError(missing);
     const rules = (await this.db.getRules(gameId)).map((r) => r.members);
     const assignment = makeDraw(players, rules); // может бросить DrawImpossible
     if (!(await this.db.saveDraw(gameId, assignment))) throw new UserError("Жеребьёвка уже проведена.");

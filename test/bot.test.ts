@@ -2,6 +2,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { BOT_USERNAME, Client, Env, plain } from "./helpers/telegram";
 
 let env: Env;
+
+/** Всем участникам игры без подарков добавляет по одному (жеребьёвка требует подарки у всех). */
+async function wishAll(code: string) {
+  const gid = (await env.db.getGameByCode(code))!.id;
+  for (const p of await env.db.getPlayers(gid))
+    if (!(await env.db.getWishes(gid, p.user_id)).length) await env.db.addWish(gid, p.user_id, "подарок");
+}
+
 beforeEach(() => {
   env = new Env();
 });
@@ -81,6 +89,7 @@ describe("полный сценарий", () => {
 
     // трое, но правило «Аня+Боб» делает жеребьёвку невозможной
     await org.click("Управление");
+    await wishAll(code);
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     expect(org.last()).toContain("невозможна");
@@ -93,6 +102,7 @@ describe("полный сценарий", () => {
 
     // жеребьёвка
     await org.click("Управление");
+    await wishAll(code);
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     expect(org.last()).toContain("Жеребьёвка проведена");
@@ -184,6 +194,7 @@ describe("отдельные сценарии", () => {
     for (const n of ["Орг", "А", "Б"]) await org.click(n);
     await org.click("Сохранить");
     await org.click("Управление");
+    await wishAll(code);
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     expect(org.last()).toContain("невозможна");
@@ -191,6 +202,7 @@ describe("отдельные сценарии", () => {
     await org.click("Открыть правила");
     await org.click("🗑 1.");
     await org.click("Управление");
+    await wishAll(code);
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     expect(org.last()).toContain("Жеребьёвка проведена");
@@ -233,6 +245,7 @@ describe("отдельные сценарии", () => {
     for (const u of [a, b]) await u.say(`/start ${code}`);
     env.blocked.add(3);
     await org.click("Управление");
+    await wishAll(code);
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     const warn = org.inbox().find((m) => m.includes("Не удалось доставить"))!;
@@ -304,6 +317,7 @@ describe("удаление игры", () => {
     await org.say("/start");
     await org.click("Удаляемая");
     await org.click("Управление");
+    await wishAll(code);
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     await org.click("Управление");
@@ -354,6 +368,7 @@ describe("длинные списки и ссылки", () => {
     expect(a.last()).toContain(url(0).slice(0, 80));
 
     await org.click("Управление");
+    await wishAll(code);
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     expect(org.last()).toContain("Жеребьёвка проведена");
@@ -433,5 +448,40 @@ describe("правила: подписи", () => {
     await org.click("🗑 2.");
     expect(org.last()).toContain("Аня (@user2), Боб (@user3)");
     expect(org.last()).not.toContain("Катя");
+  });
+});
+
+describe("жеребьёвка: подарки у всех", () => {
+  it("организатору показано, кто не добавил подарок; после добавления жеребьёвка проходит", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "Аня"), b = env.user(3, "Боб");
+    const code = await createGame(org);
+    for (const u of [a, b]) await u.say(`/start ${code}`);
+    const gid = (await env.db.getGameByCode(code))!.id;
+    await a.click("Добавить подарок");
+    await a.say("книга");
+
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    expect(org.last()).toContain("не все добавили подарки");
+    expect(org.last()).toContain("Орг (@");
+    expect(org.last()).toContain("(вы)");
+    expect(org.last()).toContain("Боб");
+    expect(org.last()).not.toContain("Аня");
+    expect((await env.db.getGame(gid))!.status).toBe("open");
+
+    // обойти проверку «подделанной» кнопкой нельзя
+    await org.rawCallback(`mdy:${gid}`);
+    expect(org.last()).toContain("не все добавили подарки");
+    expect((await env.db.getGame(gid))!.status).toBe("open");
+    expect((await env.db.getAssignments(gid)).size).toBe(0);
+
+    // организатор и Боб добавили — всё проходит
+    await env.db.addWish(gid, 1, "кофе");
+    await env.db.addWish(gid, 3, "чай");
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    await org.click("Запустить");
+    expect(org.last()).toContain("Жеребьёвка проведена");
+    expect((await env.db.getGame(gid))!.status).toBe("drawn");
   });
 });

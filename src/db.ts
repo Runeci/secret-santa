@@ -119,6 +119,19 @@ export class Database {
   async isPlayer(gameId: number, userId: number): Promise<boolean> {
     return (await this.getPlayer(gameId, userId)) !== null;
   }
+  /** Участники, у которых в списке нет ни одного подарка. */
+  async playersWithoutWishes(gameId: number): Promise<Player[]> {
+    const r = await this.d
+      .prepare(
+        `SELECT p.* FROM players p WHERE p.game_id = ?
+         AND NOT EXISTS (SELECT 1 FROM wishes w WHERE w.game_id = p.game_id AND w.user_id = p.user_id)
+         ORDER BY p.joined_at, p.user_id`,
+      )
+      .bind(gameId)
+      .all<Player>();
+    return r.results;
+  }
+
   /** Убирает участника, его подарки и его из правил; правила < 2 человек удаляются. */
   async removePlayer(gameId: number, userId: number): Promise<void> {
     const d = this.d;

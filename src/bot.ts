@@ -4,7 +4,7 @@ import type { Database } from "./db";
 import * as kb from "./keyboards";
 import type { Markup } from "./keyboards";
 import { type OutMsg, type Outbox } from "./outbox";
-import { DrawImpossible, Service, UserError } from "./service";
+import { DrawImpossible, MissingWishesError, Service, UserError } from "./service";
 import * as t from "./texts";
 
 const { e } = t;
@@ -264,10 +264,16 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     );
     await screenGames(ctx, uidOf(ctx));
   });
+  async function showMissingWishes(ctx: Context, gid: number, missing: { name: string }[]): Promise<void> {
+    const org = await db.getPlayer(gid, uidOf(ctx));
+    await show(ctx, t.missingWishes(missing.map((p) => p.name), org?.name), kb.backManage(gid));
+  }
   route("md", 1, async (ctx, gid) => {
     const game = await svc.organizerOpenGame(gid, uidOf(ctx));
     const n = (await db.getPlayers(gid)).length;
     if (n < MIN_PLAYERS) throw new UserError(`Для жеребьёвки нужно минимум ${MIN_PLAYERS} участника, сейчас ${n}.`);
+    const missing = await db.playersWithoutWishes(gid);
+    if (missing.length) return showMissingWishes(ctx, gid, missing);
     await show(
       ctx,
       `Запустить жеребьёвку в «${e(game.title)}»? Участников: ${n}.\n\n` +
@@ -281,6 +287,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     try {
       assignment = await svc.runDraw(gid, uidOf(ctx));
     } catch (err) {
+      if (err instanceof MissingWishesError) return showMissingWishes(ctx, gid, err.missing);
       if (err instanceof DrawImpossible) {
         await show(ctx, t.drawImpossible(game.title), kb.drawRetry(gid));
         return;
