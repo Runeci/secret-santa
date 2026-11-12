@@ -54,6 +54,14 @@ npx wrangler login
 Организатор может удалить игру кнопкой «🗑 Удалить игру» в «Управлении игрой» (до и после жеребьёвки):
 участники получают уведомление, все данные игры стираются.
 
+## Автодеплой
+
+Worker подключён к GitHub через Workers Builds: каждый пуск в ветку `main` запускает
+`npm ci && npm test`, и только если тесты прошли, выполняется `npx wrangler deploy`.
+Настройки: Cloudflare Dashboard → Workers & Pages → `secret-santa-bot` → Settings → Builds.
+Секреты и webhook при выкладке не меняются. Если изменится схема базы, миграцию нужно применить
+вручную: `npx wrangler d1 migrations apply secret-santa --remote`.
+
 ## Разработка и тесты
 
 ```bash
