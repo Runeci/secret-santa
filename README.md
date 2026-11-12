@@ -49,12 +49,15 @@ npx wrangler login
    В ответе должно быть `"ok":true` и ваш адрес в `getWebhookInfo`.
 7. Откройте бота в Telegram и отправьте `/start`.
 
-Обновление после изменений: `npx wrangler deploy`. Логи: `npx wrangler tail`.
+Обновление после изменений: `git pull`, затем `npx wrangler deploy`. Логи: `npx wrangler tail`.
+
+Организатор может удалить игру кнопкой «🗑 Удалить игру» в «Управлении игрой» (до и после жеребьёвки):
+участники получают уведомление, все данные игры стираются.
 
 ## Разработка и тесты
 
 ```bash
-npm test            # 117 тестов: жеребьёвка, правила игры, сценарии бота с фейковым Telegram
+npm test            # 119 тестов: жеребьёвка, правила игры, сценарии бота с фейковым Telegram
 npm run typecheck
 npm run smoke       # реальный runtime Workers локально: webhook + D1 + очередь, Telegram подменён
 ```

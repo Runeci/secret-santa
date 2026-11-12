@@ -83,6 +83,19 @@ export class Database {
     return r.results;
   }
 
+  /** Полностью удаляет игру со всеми участниками, подарками, правилами и парами. */
+  async deleteGame(gameId: number): Promise<void> {
+    const d = this.d;
+    await d.batch([
+      d.prepare("DELETE FROM assignments WHERE game_id = ?").bind(gameId),
+      d.prepare("DELETE FROM wishes WHERE game_id = ?").bind(gameId),
+      d.prepare("DELETE FROM rule_members WHERE rule_id IN (SELECT id FROM rules WHERE game_id = ?)").bind(gameId),
+      d.prepare("DELETE FROM rules WHERE game_id = ?").bind(gameId),
+      d.prepare("DELETE FROM players WHERE game_id = ?").bind(gameId),
+      d.prepare("DELETE FROM games WHERE id = ?").bind(gameId),
+    ]);
+  }
+
   // --- участники -------------------------------------------------------
   async addPlayer(gameId: number, userId: number, name: string): Promise<void> {
     await this.d

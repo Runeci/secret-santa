@@ -60,6 +60,7 @@ export function manage(gid: number, open: boolean): Markup {
     [btn("🔗 Ссылка-приглашение", `ml:${gid}`)],
   ];
   if (open) rows.push([btn("🎲 Провести жеребьёвку", `md:${gid}`)]);
+  rows.push([btn("🗑 Удалить игру", `mx:${gid}`)]);
   rows.push([btn("⬅️ В меню игры", `g:${gid}`)]);
   return kb(...rows);
 }

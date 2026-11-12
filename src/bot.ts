@@ -231,6 +231,23 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     await svc.deleteRule(gid, uidOf(ctx), rid);
     await screenRules(ctx, uidOf(ctx), gid);
   });
+  route("mx", 1, async (ctx, gid) => {
+    const game = await svc.gameForOrganizer(gid, uidOf(ctx));
+    await show(
+      ctx,
+      `Удалить игру «${e(game.title)}»? Все участники получат уведомление, а списки подарков и пары будут стёрты без возможности восстановления.`,
+      kb.confirm(`mxy:${gid}`, `m:${gid}`, "🗑 Да, удалить", "⬅️ Отмена"),
+    );
+  });
+  route("mxy", 1, async (ctx, gid) => {
+    const { game, players } = await svc.deleteGame(gid, uidOf(ctx));
+    await outbox.send(
+      players
+        .filter((p) => p.user_id !== game.organizer_id)
+        .map((p) => ({ chat: p.user_id, text: `🗑 Организатор удалил игру «${e(game.title)}».` })),
+    );
+    await screenGames(ctx, uidOf(ctx));
+  });
   route("md", 1, async (ctx, gid) => {
     const game = await svc.organizerOpenGame(gid, uidOf(ctx));
     const n = (await db.getPlayers(gid)).length;

@@ -138,3 +138,27 @@ describe("жеребьёвка", () => {
     expect((await svc.join(game.code, old + 1, "x")).result).toBe("full");
   });
 });
+
+describe("удаление игры", () => {
+  it("организатор удаляет игру со всеми данными, чужие игры остаются", async () => {
+    await join(2, 3, 4);
+    await svc.addWish(game.id, 2, "книга");
+    await svc.createRule(game.id, ORG, new Set([2, 3]));
+    await svc.runDraw(game.id, ORG);
+    const other = await svc.createGame("Другая", ORG, "Орг");
+    await svc.addWish(other.id, ORG, "сохранить");
+
+    await expect(svc.deleteGame(game.id, 2)).rejects.toThrow(UserError); // не организатор
+    const { players } = await svc.deleteGame(game.id, ORG);
+    expect(players.map((p) => p.user_id).sort()).toEqual([1, 2, 3, 4]);
+
+    expect(await svc.db.getGame(game.id)).toBeNull();
+    expect(await svc.db.getPlayers(game.id)).toEqual([]);
+    expect(await svc.db.getWishes(game.id, 2)).toEqual([]);
+    expect(await svc.db.getRules(game.id)).toEqual([]);
+    expect((await svc.db.getAssignments(game.id)).size).toBe(0);
+    expect((await svc.join(game.code, 9, "x")).result).toBe("not_found");
+    expect((await svc.db.getWishes(other.id, ORG)).length).toBe(1);
+    expect((await svc.db.gamesOfUser(ORG)).map((g) => g.id)).toEqual([other.id]);
+  });
+});

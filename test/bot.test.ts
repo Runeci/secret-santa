@@ -283,3 +283,47 @@ describe("отдельные сценарии", () => {
     expect(org.last()).toContain("Не понял");
   });
 });
+
+describe("удаление игры", () => {
+  it("с подтверждением, участники получают уведомление, их данные стёрты", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "А"), b = env.user(3, "Б");
+    const code = await createGame(org, "Удаляемая");
+    const keep = await createGame(org, "Остаётся");
+    for (const u of [a, b]) await u.say(`/start ${code}`);
+    const gid = (await env.db.getGameByCode(code))!.id;
+    await a.click("Добавить подарок");
+    await a.say("книга");
+
+    // участник удалить не может
+    await a.rawCallback(`mx:${gid}`);
+    expect(env.alerts.at(-1)?.toLowerCase()).toContain("организатор");
+    await a.rawCallback(`mxy:${gid}`);
+    expect(await env.db.getGame(gid)).not.toBeNull();
+
+    // организатор: подтверждение, потом удаление (даже после жеребьёвки)
+    await org.say("/start");
+    await org.click("Удаляемая");
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    await org.click("Запустить");
+    await org.click("Управление");
+    await org.click("Удалить игру");
+    expect(org.last()).toContain("Удалить игру «Удаляемая»");
+    await org.click("Отмена");
+    expect(await env.db.getGame(gid)).not.toBeNull();
+    await org.click("Удалить игру");
+    await org.click("Да, удалить");
+
+    expect(await env.db.getGame(gid)).toBeNull();
+    expect((await env.db.getAssignments(gid)).size).toBe(0);
+    expect(await env.db.getWishes(gid, 2)).toEqual([]);
+    for (const u of [a, b]) expect(u.inbox().some((m) => m.includes("удалил игру «Удаляемая»"))).toBe(true);
+    expect(org.inbox().some((m) => m.includes("удалил игру"))).toBe(false); // себя не уведомляем
+    expect(org.last()).toContain("Остаётся"); // остался экран с оставшейся игрой
+    expect(await env.db.getGameByCode(keep)).not.toBeNull();
+
+    // у участника старые кнопки больше не работают
+    await a.rawCallback(`g:${gid}`);
+    expect(env.alerts.at(-1)).toContain("не участвуете");
+  });
+});

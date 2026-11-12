@@ -52,6 +52,14 @@ export class Service {
     return { result: "joined", game };
   }
 
+  /** Удаляет игру (организатор, в любой момент). Возвращает игру и её участников для уведомлений. */
+  async deleteGame(gameId: number, organizerId: number): Promise<{ game: Game; players: Player[] }> {
+    const game = await this.gameForOrganizer(gameId, organizerId);
+    const players = await this.db.getPlayers(gameId);
+    await this.db.deleteGame(gameId);
+    return { game, players };
+  }
+
   async removePlayer(gameId: number, organizerId: number, targetId: number): Promise<Player> {
     await this.organizerOpenGame(gameId, organizerId);
     if (targetId === organizerId) throw new UserError("Организатор не может убрать сам себя.");
