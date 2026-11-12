@@ -189,7 +189,7 @@ describe("отдельные сценарии", () => {
     expect(org.last()).toContain("невозможна");
     expect(org.hasButton("Открыть правила")).toBe(true);
     await org.click("Открыть правила");
-    await org.click("Удалить правило 1");
+    await org.click("🗑 1.");
     await org.click("Управление");
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
@@ -412,5 +412,26 @@ describe("меню участника", () => {
     expect(a.hasButton("Создать игру")).toBe(true);
     await a.click("Создать игру");
     expect(a.last()).toContain("назовём");
+  });
+});
+
+describe("правила: подписи", () => {
+  it("кнопка удаления показывает, из кого состоит правило, и разные правила различимы", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "Аня"), b = env.user(3, "Боб"), c = env.user(4, "Катя");
+    const code = await createGame(org);
+    for (const u of [a, b, c]) await u.say(`/start ${code}`);
+    await org.click("Управление");
+    await org.click("Правила");
+    for (const pair of [["Аня", "Боб"], ["Боб", "Катя"]]) {
+      await org.click("Добавить правило");
+      for (const n of pair) await org.click(n);
+      await org.click("Сохранить");
+    }
+    const labels = org.buttons().map((x) => x.text).filter((x) => x.startsWith("🗑"));
+    expect(labels).toEqual(["🗑 1. Аня (@user2), Боб (@user3)", "🗑 2. Боб (@user3), Катя (@user4)"]);
+    // удаляем второе правило — первое остаётся
+    await org.click("🗑 2.");
+    expect(org.last()).toContain("Аня (@user2), Боб (@user3)");
+    expect(org.last()).not.toContain("Катя");
   });
 });

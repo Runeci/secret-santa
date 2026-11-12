@@ -65,7 +65,7 @@ Worker подключён к GitHub через Workers Builds: каждый пу
 ## Разработка и тесты
 
 ```bash
-npm test            # 124 теста: жеребьёвка, правила игры, сценарии бота с фейковым Telegram
+npm test            # 123 теста: жеребьёвка, правила игры, сценарии бота с фейковым Telegram
 npm run typecheck
 npm run smoke       # реальный runtime Workers локально: webhook + D1 + очередь, Telegram подменён
 ```

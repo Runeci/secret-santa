@@ -103,10 +103,16 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const rules = await db.getRules(gid);
     let text =
       "🚫 <b>Правила «кто кому не дарит»</b>\nПравило — группа от 2 человек (например, живут вместе): внутри группы никто никому не достаётся.\n\n";
+    const label = (members: number[]) => members.map((m) => names.get(m) ?? "?").join(", ");
     text += rules.length
-      ? rules.map((r, i) => `${i + 1}. ` + r.members.map((m) => e(names.get(m) ?? "?")).join(", ")).join("\n")
+      ? rules.map((r, i) => `${i + 1}. ${e(label(r.members))}`).join("\n") +
+        (game.status === "open" ? "\n\nЧтобы удалить правило, нажмите на него ниже." : "")
       : "<i>Правил пока нет.</i>";
-    await show(ctx, text, kb.rules(gid, rules.map((r) => r.id), game.status === "open"));
+    await show(
+      ctx,
+      text,
+      kb.rules(gid, rules.map((r) => ({ id: r.id, label: label(r.members) })), game.status === "open"),
+    );
   }
 
   async function screenTarget(ctx: Context, uid: number, gid: number): Promise<void> {

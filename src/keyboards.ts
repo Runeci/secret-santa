@@ -80,10 +80,11 @@ export function players(gid: number, plist: Player[], organizerId: number, open:
 export const confirm = (yes: string, no: string, yesText = "✅ Да", noText = "⬅️ Нет"): Markup =>
   kb([btn(yesText, yes), btn(noText, no)]);
 
-export function rules(gid: number, ruleIds: number[], open: boolean): Markup {
+/** items: правила с подписью из имён участников, чтобы было видно, какое именно удаляется. */
+export function rules(gid: number, items: { id: number; label: string }[], open: boolean): Markup {
   const rows: Button[][] = [];
   if (open) {
-    ruleIds.forEach((rid, i) => rows.push([btn(`🗑 Удалить правило ${i + 1}`, `mrd:${gid}:${rid}`)]));
+    items.forEach((r, i) => rows.push([btn(`🗑 ${i + 1}. ${short(r.label, 45)}`, `mrd:${gid}:${r.id}`)]));
     rows.push([btn("➕ Добавить правило", `mra:${gid}`)]);
   }
   rows.push([btn("⬅️ Управление", `m:${gid}`)]);
