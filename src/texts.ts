@@ -60,10 +60,14 @@ export function splitParts(header: string, lines: string[], footer: string, limi
   return parts;
 }
 
-export function gameMenu(game: Game, players: number, isOrg: boolean, ready?: boolean): string {
+export function gameMenu(game: Game, players: number, isOrg: boolean, ready?: boolean, wishCount = 1): string {
   const status = game.status === "open" ? "ждём участников" : "жеребьёвка проведена ✅";
   const role = isOrg ? " · вы организатор" : "";
-  const mine = game.status === "open" && ready !== undefined ? `\nВаш список: ${ready ? "готов ✅" : "ещё не готов"}` : "";
+  let mine = "";
+  if (game.status === "open" && ready !== undefined) {
+    mine = `\nВаш список: ${ready ? "готов ✅" : "ещё не готов"}`;
+    if (ready && wishCount === 0) mine += " — но подарков в нём нет, добавьте хотя бы один";
+  }
   return `🎄 <b>${e(game.title)}</b>${role}\nУчастников: ${players} · ${status}${mine}`;
 }
 

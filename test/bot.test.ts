@@ -522,7 +522,7 @@ describe("кнопка «Мой список готов»", () => {
     expect(ann.last()).not.toContain("Ваш список:");
   });
 
-  it("удалил последний подарок — список перестаёт быть готовым; вернуть в работу блокирует жеребьёвку", async () => {
+  it("удалил последний подарок — отметка остаётся как поставил участник, жеребьёвка заблокирована; вернуть в работу можно", async () => {
     const org = env.user(1, "Орг"), ann = env.user(2, "Аня"), bob = env.user(3, "Боб");
     const code = await createGame(org);
     for (const u of [ann, bob]) await u.say(`/start ${code}`);
@@ -535,17 +535,23 @@ describe("кнопка «Мой список готов»", () => {
     await ann.click("1.");
     await ann.click("Удалить");
     await ann.click("В меню игры");
-    expect(ann.last()).toContain("Ваш список: ещё не готов");
-
-    await bob.say("/start");
-    await bob.click("Вернуть список в работу");
-    expect(bob.last()).toContain("ещё не готов");
+    expect(ann.last()).toContain("Ваш список: готов ✅"); // сама не сбросилась
+    expect(ann.last()).toContain("подарков в нём нет");
+    expect(ann.hasButton("Вернуть список в работу")).toBe(true); // и вернуть в работу можно
 
     await org.click("Управление");
     await org.click("Провести жеребьёвку");
     expect(org.last()).toMatch(/Аня.*— нет подарков/);
-    expect(org.last()).toMatch(/Боб.*— не отметил\(а\) список готовым/);
     expect((await env.db.getGame(gid))!.status).toBe("open");
+
+    await ann.click("Вернуть список в работу");
+    expect(ann.last()).toContain("ещё не готов");
+
+    await bob.say("/start");
+    await bob.click("Вернуть список в работу");
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    expect(org.last()).toMatch(/Боб.*— не отметил\(а\) список готовым/);
   });
 });
 

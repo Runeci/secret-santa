@@ -103,8 +103,12 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const isOrg = game.organizer_id === uid;
     const all = await db.getReadiness(gid);
     const me = all.find((p) => p.user_id === uid)!;
-    const ready = isReady(me);
-    await show(ctx, t.gameMenu(game, all.length, isOrg, ready), kb.gameMenu(game, isOrg, me.wish_count, ready));
+    const ready = me.ready === 1; // то, что участник отметил сам; изменяется только его кликом
+    await show(
+      ctx,
+      t.gameMenu(game, all.length, isOrg, ready, me.wish_count),
+      kb.gameMenu(game, isOrg, me.wish_count, ready),
+    );
   }
 
   async function screenWishlist(ctx: Context, uid: number, gid: number): Promise<void> {
@@ -210,7 +214,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const uid = uidOf(ctx);
     const game = await svc.gameForPlayer(gid, uid);
     const me = (await db.getReadiness(gid)).find((p) => p.user_id === uid)!;
-    const makeReady = !isReady(me);
+    const makeReady = me.ready !== 1;
     const { ready, total } = await svc.setReady(gid, uid, makeReady);
     await screenGame(ctx, uid, gid);
     if (!makeReady) return;
@@ -466,7 +470,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const me = (await db.getReadiness(gid)).find((p) => p.user_id === uid)!;
     await ctx.reply(`${saved} ✅\n\n` + t.myWishlist(await db.getWishes(gid, uid), game.status === "drawn"), {
       parse_mode: HTML,
-      reply_markup: kb.afterWish(gid, game.status === "open" ? isReady(me) : undefined),
+      reply_markup: kb.afterWish(gid, game.status === "open" ? me.ready === 1 : undefined),
     });
     await notifySanta(ctx, gid, uid);
   }

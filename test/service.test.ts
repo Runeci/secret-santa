@@ -121,13 +121,19 @@ describe("жеребьёвка: готовность списков", () => {
   it("«готов» нельзя нажать с пустым списком", async () => {
     await expect(svc.setReady(game.id, ORG, true)).rejects.toThrow(/хотя бы один подарок/);
   });
-  it("если удалить последний подарок, готовность сбрасывается", async () => {
+  it("удаление последнего подарка не меняет отметку сама: жеребьёвка заблокирована («нет подарков»), отметка остаётся", async () => {
     await join(2, 3);
     await wishAll();
     const wid = (await svc.db.getWishes(game.id, 2))[0].id;
     await svc.deleteWish(game.id, 2, wid);
+    expect((await svc.db.getPlayer(game.id, 2))!.ready).toBe(1); // сама не сброшена
+    const err = await svc.runDraw(game.id, ORG).catch((e) => e);
+    expect(err).toBeInstanceOf(NotReadyError);
+    expect(err.notReady.map((p: { name: string; wish_count: number }) => [p.name, p.wish_count])).toEqual([["U2", 0]]);
+    expect(await svc.readiness(game.id)).toEqual({ ready: 2, total: 3 });
+    // участник сам решает: вернуть в работу — это явный клик
+    await svc.setReady(game.id, 2, false);
     expect((await svc.db.getPlayer(game.id, 2))!.ready).toBe(0);
-    await expect(svc.runDraw(game.id, ORG)).rejects.toBeInstanceOf(NotReadyError);
     await svc.addWish(game.id, 2, "новое");
     await expect(svc.runDraw(game.id, ORG)).rejects.toBeInstanceOf(NotReadyError); // само не стало готовым
     await svc.setReady(game.id, 2, true);

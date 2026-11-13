@@ -106,8 +106,8 @@ export class Service {
   async deleteWish(gameId: number, userId: number, wishId: number): Promise<void> {
     await this.ownWish(gameId, userId, wishId);
     await this.db.deleteWish(wishId);
-    // пустой список не может быть «готовым»
-    if (!(await this.db.getWishes(gameId, userId)).length) await this.db.setReady(gameId, userId, false);
+    // Отметка «готов» меняется только явным кликом участника. Если подарков не осталось, жеребьёвка всё равно
+    // заблокирована (isReady требует хотя бы один подарок), а организатор видит «нет подарков».
   }
 
   /** «Мой список готов» / вернуть в работу. Возвращает, сколько списков готово и сколько участников всего. */
