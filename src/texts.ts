@@ -74,13 +74,15 @@ export function splitParts(header: string, lines: string[], footer: string, limi
 
 export function gameMenu(game: Game, players: number, isOrg: boolean, ready?: boolean, wishCount = 1): string {
   const status = game.status === "open" ? "ждём участников" : "жеребьёвка проведена ✅";
-  const role = isOrg ? " · вы организатор" : "";
   let mine = "";
   if (game.status === "open" && ready !== undefined) {
     mine = `\nВаш список: ${ready ? "готов ✅" : "ещё не готов"}`;
     if (ready && wishCount === 0) mine += " — но подарков в нём нет, добавьте хотя бы один";
   }
-  return `🎄 <b>${e(game.title)}</b>${role}\nУчастников: ${players} · ${status}${mine}`;
+  // роль — отдельной строкой, чтобы организатор сразу видел, что он управляет игрой
+  const icon = isOrg ? "👑" : "🎄";
+  const role = isOrg ? "Вы — организатор" : "Вы — участник";
+  return `${icon} <b>${e(game.title)}</b>\n${role}\nУчастников: ${players} · ${status}${mine}`;
 }
 
 const PREVIEW_LEN = 150;

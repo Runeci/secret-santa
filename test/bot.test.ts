@@ -853,7 +853,9 @@ describe("приглашение: игрок не видит служебных 
 
     await a.say(`/start ${code}`);
     expect(a.inbox().join("\n")).not.toMatch(/организатор|Управление/i);
-    expect(org.inbox().join("\n")).toContain("вы организатор"); // а у организатора — есть
+    expect(org.inbox().join("\n")).toContain("Вы — организатор"); // а у организатора — есть
+    expect(a.inbox().join("\n")).toContain("Вы — участник");
+    expect(org.inbox().join("\n")).toContain("👑 Новый год");
   });
 });
 
@@ -868,5 +870,21 @@ describe("«Мои игры»: пометка организатора", () => {
     expect(labels).toEqual(["👑 Моя игра", "🎄 Чужая игра"]);
     expect(x.last()).toContain("👑 — вы организатор, 🎄 — вы участник");
     void mine;
+  });
+});
+
+describe("роль в меню игры", () => {
+  it("организатор сразу видит «Вы — организатор», участник — «Вы — участник»; и в «Управлении»", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "Аня");
+    const code = await createGame(org, "Офис");
+    await a.say(`/start ${code}`);
+    await org.say("/start");
+    expect(org.last()).toContain("👑 Офис");
+    expect(org.last()).toContain("Вы — организатор");
+    expect(a.last()).toContain("🎄 Офис");
+    expect(a.last()).toContain("Вы — участник");
+    expect(a.last()).not.toContain("организатор");
+    await org.click("Управление");
+    expect(org.last()).toContain("Вы — организатор");
   });
 });
