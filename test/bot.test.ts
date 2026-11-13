@@ -240,6 +240,8 @@ describe("отдельные сценарии", () => {
     await a.say("/start");
     expect(a.last()).toContain("Ваши игры");
     expect(a.hasButton("Игра один") && a.hasButton("Игра два")).toBe(true);
+    expect(a.buttons().filter((b) => b.text.startsWith("🎄")).length).toBe(2); // Аня — только участник
+    expect(a.last()).not.toContain("вы организатор");
     await a.click("Игра один");
     await a.click("Выйти из игры");
     await a.click("Да, выйти");
@@ -852,5 +854,19 @@ describe("приглашение: игрок не видит служебных 
     await a.say(`/start ${code}`);
     expect(a.inbox().join("\n")).not.toMatch(/организатор|Управление/i);
     expect(org.inbox().join("\n")).toContain("вы организатор"); // а у организатора — есть
+  });
+});
+
+describe("«Мои игры»: пометка организатора", () => {
+  it("👑 у игр, где я организатор, 🎄 — где участник", async () => {
+    const x = env.user(1, "Икс"), y = env.user(2, "Игрек");
+    const mine = await createGame(x, "Моя игра");
+    const theirs = await createGame(y, "Чужая игра");
+    await x.say(`/start ${theirs}`); // Икс — организатор «Моей» и участник «Чужой»
+    await x.say("/start");
+    const labels = x.buttons().map((b) => b.text).filter((t) => /игра/.test(t));
+    expect(labels).toEqual(["👑 Моя игра", "🎄 Чужая игра"]);
+    expect(x.last()).toContain("👑 — вы организатор, 🎄 — вы участник");
+    void mine;
   });
 });

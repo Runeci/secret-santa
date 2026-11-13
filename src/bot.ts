@@ -94,8 +94,13 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   async function screenGames(ctx: Context, uid: number, forceList = false): Promise<void> {
     const games = await db.gamesOfUser(uid);
     if (games.length === 1 && !forceList) return screenGame(ctx, uid, games[0].id);
-    if (!games.length) return show(ctx, t.WELCOME + "\n\n" + t.NO_GAMES, kb.gamesList([]));
-    await show(ctx, "🎅 <b>Ваши игры</b>", kb.gamesList(games));
+    if (!games.length) return show(ctx, t.WELCOME + "\n\n" + t.NO_GAMES, kb.gamesList([], uid));
+    const hasOrg = games.some((g) => g.organizer_id === uid);
+    await show(
+      ctx,
+      "🎅 <b>Ваши игры</b>" + (hasOrg ? "\n👑 — вы организатор, 🎄 — вы участник" : ""),
+      kb.gamesList(games, uid),
+    );
   }
 
   async function screenGame(ctx: Context, uid: number, gid: number): Promise<void> {

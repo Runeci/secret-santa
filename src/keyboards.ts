@@ -12,8 +12,12 @@ function short(text: string, n = 40): string {
   return chars.length <= n ? t : chars.slice(0, n - 1).join("") + "…";
 }
 
-export const gamesList = (games: Game[]): Markup =>
-  kb(...games.map((g) => [btn(`🎄 ${short(g.title)}`, `g:${g.id}`)]), [btn("➕ Создать игру", "new")]);
+/** 👑 — игры, где пользователь организатор; 🎄 — где участник. */
+export const gamesList = (games: Game[], uid: number): Markup =>
+  kb(
+    ...games.map((g) => [btn(`${g.organizer_id === uid ? "👑" : "🎄"} ${short(g.title)}`, `g:${g.id}`)]),
+    [btn("➕ Создать игру", "new")],
+  );
 
 export function gameMenu(game: Game, isOrg: boolean, wishCount: number): Markup {
   const gid = game.id;
