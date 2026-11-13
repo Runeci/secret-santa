@@ -1,11 +1,13 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type { D1Like, D1Result, D1Stmt } from "../../src/db";
 
 /** Тестовая замена D1 на node:sqlite с тем же интерфейсом (prepare/bind/first/all/run/batch). */
 export function createD1(): D1Like {
   const db = new DatabaseSync(":memory:");
-  db.exec(readFileSync(new URL("../../migrations/0001_init.sql", import.meta.url), "utf8"));
+  const dir = new URL("../../migrations/", import.meta.url);
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort())
+    db.exec(readFileSync(new URL(f, dir), "utf8"));
 
   const make = (sql: string, params: unknown[] = []): D1Stmt & { exec(): D1Result } => ({
     bind: (...v: unknown[]) => make(sql, v),

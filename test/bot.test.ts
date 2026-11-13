@@ -3,11 +3,13 @@ import { BOT_USERNAME, Client, Env, plain } from "./helpers/telegram";
 
 let env: Env;
 
-/** Всем участникам игры без подарков добавляет по одному (жеребьёвка требует подарки у всех). */
+/** Всем участникам игры добавляет подарок (если пусто) и отмечает список готовым: жеребьёвка этого требует. */
 async function wishAll(code: string) {
   const gid = (await env.db.getGameByCode(code))!.id;
-  for (const p of await env.db.getPlayers(gid))
+  for (const p of await env.db.getPlayers(gid)) {
     if (!(await env.db.getWishes(gid, p.user_id)).length) await env.db.addWish(gid, p.user_id, "подарок");
+    await env.db.setReady(gid, p.user_id, true);
+  }
 }
 
 beforeEach(() => {
@@ -49,7 +51,7 @@ describe("полный сценарий", () => {
     expect(ann.last()).toContain("Книга <Дюна>");
     await ann.click("Добавить ещё");
     await ann.say("Носки");
-    await ann.click("Мой список");
+    await ann.click("📝 Мой список");
     await ann.click("Носки");
     await ann.click("Изменить");
     await ann.say("Тёплые носки");
@@ -162,7 +164,7 @@ describe("полный сценарий", () => {
 
     // удаление тоже уведомляет
     n = santaOfAnn.inbox().length;
-    await ann.click("Мой список");
+    await ann.click("📝 Мой список");
     await ann.click("Шоколад");
     await ann.click("Удалить");
     expect(santaOfAnn.inbox().slice(n).some((m) => m.includes("обновил") && !m.includes("Шоколад"))).toBe(true);
@@ -171,7 +173,7 @@ describe("полный сценарий", () => {
     const santaOfBob = users[(await env.db.getGiver(gid, 3))!];
     n = santaOfBob.inbox().length;
     await bob.say("/start");
-    await bob.click("Мой список");
+    await bob.click("📝 Мой список");
     await bob.click("Чай");
     await bob.click("Изменить");
     await bob.say("Зелёный чай");
@@ -366,7 +368,7 @@ describe("длинные списки и ссылки", () => {
       expect(a.last()).toContain("Добавлено");
     }
     // экран «Мой список» и сообщение после добавления помещаются в одно сообщение
-    await a.click("Мой список");
+    await a.click("📝 Мой список");
     expect(a.last().length).toBeLessThanOrEqual(4096);
     expect(a.last()).toContain("сокращены");
     // полный текст пункта — на его карточке
@@ -402,7 +404,7 @@ describe("длинные списки и ссылки", () => {
     // после жеребьёвки правка тоже доходит целиком (несколько сообщений Санте)
     const n = env.sent.length;
     await a.say("/start");
-    await a.click("Мой список");
+    await a.click("📝 Мой список");
     await a.click("1.");
     await a.click("Изменить");
     await a.say(url(99));
@@ -457,38 +459,93 @@ describe("правила: подписи", () => {
   });
 });
 
-describe("жеребьёвка: подарки у всех", () => {
-  it("организатору показано, кто не добавил подарок; после добавления жеребьёвка проходит", async () => {
-    const org = env.user(1, "Орг"), a = env.user(2, "Аня"), b = env.user(3, "Боб");
+describe("кнопка «Мой список готов»", () => {
+  it("без готовности всех жеребьёвка не идёт; организатор видит прогресс и причины", async () => {
+    const org = env.user(1, "Орг"), ann = env.user(2, "Аня"), bob = env.user(3, "Боб");
     const code = await createGame(org);
-    for (const u of [a, b]) await u.say(`/start ${code}`);
+    for (const u of [ann, bob]) await u.say(`/start ${code}`);
     const gid = (await env.db.getGameByCode(code))!.id;
-    await a.click("Добавить подарок");
-    await a.say("книга");
+    expect(ann.last()).toContain("Ваш список: ещё не готов");
 
+    // с пустым списком отметить нельзя
+    await ann.click("Мой список готов");
+    expect(env.alerts.at(-1)).toContain("хотя бы один подарок");
+
+    // подарок добавлен -> кнопка есть сразу в сообщении «Добавлено»
+    await ann.click("Добавить подарок");
+    await ann.say("книга");
+    expect(ann.hasButton("Мой список готов")).toBe(true);
+    await ann.click("Мой список готов");
+    expect(ann.last()).toContain("Ваш список: готов ✅");
+    expect(ann.hasButton("Вернуть список в работу")).toBe(true);
+    expect(org.inbox().some((m) => m.includes("Аня") && m.includes("отметил(а) список готовым") && m.includes("Готовы: 1 из 3"))).toBe(true);
+
+    // организатор: прогресс и отказ с причинами
+    await org.click("Управление");
+    expect(org.last()).toContain("Списки готовы: 1 из 3");
+    await org.click("Провести жеребьёвку");
+    expect(org.last()).toContain("не все списки готовы");
+    expect(org.last()).toMatch(/Орг \(@user1\) \(вы\) — нет подарков/);
+    expect(org.last()).toMatch(/Боб \(@user3\) — нет подарков/);
+    expect(org.last()).not.toContain("Аня");
+    await org.rawCallback(`mdy:${gid}`); // обойти кнопкой нельзя
+    expect(org.last()).toContain("не все списки готовы");
+    expect((await env.db.getGame(gid))!.status).toBe("open");
+
+    // у Боба есть подарок, но он не нажал «готов» -> причина другая
+    await bob.click("Добавить подарок");
+    await bob.say("чай");
     await org.click("Управление");
     await org.click("Провести жеребьёвку");
-    expect(org.last()).toContain("не все добавили подарки");
-    expect(org.last()).toContain("Орг (@");
-    expect(org.last()).toContain("(вы)");
-    expect(org.last()).toContain("Боб");
-    expect(org.last()).not.toContain("Аня");
-    expect((await env.db.getGame(gid))!.status).toBe("open");
+    expect(org.last()).toMatch(/Боб \(@user3\) — не отметил\(а\) список готовым/);
 
-    // обойти проверку «подделанной» кнопкой нельзя
-    await org.rawCallback(`mdy:${gid}`);
-    expect(org.last()).toContain("не все добавили подарки");
-    expect((await env.db.getGame(gid))!.status).toBe("open");
-    expect((await env.db.getAssignments(gid)).size).toBe(0);
+    await bob.click("Мой список готов");
+    expect(org.inbox().some((m) => m.includes("Готовы: 2 из 3"))).toBe(true);
 
-    // организатор и Боб добавили — всё проходит
-    await env.db.addWish(gid, 1, "кофе");
-    await env.db.addWish(gid, 3, "чай");
+    // последним готов становится организатор: ему приходит «можно проводить»
+    await org.say("/start");
+    await org.click("Добавить подарок");
+    await org.say("кофе");
+    await org.click("Мой список готов");
+    expect(org.inbox().some((m) => m.includes("Все списки готовы") && m.includes("3 из 3"))).toBe(true);
+
     await org.click("Управление");
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     expect(org.last()).toContain("Жеребьёвка проведена");
     expect((await env.db.getGame(gid))!.status).toBe("drawn");
+
+    // после жеребьёвки кнопки готовности нет
+    await ann.say("/start");
+    expect(ann.hasButton("Мой список готов")).toBe(false);
+    expect(ann.hasButton("Вернуть список в работу")).toBe(false);
+    expect(ann.last()).not.toContain("Ваш список:");
+  });
+
+  it("удалил последний подарок — список перестаёт быть готовым; вернуть в работу блокирует жеребьёвку", async () => {
+    const org = env.user(1, "Орг"), ann = env.user(2, "Аня"), bob = env.user(3, "Боб");
+    const code = await createGame(org);
+    for (const u of [ann, bob]) await u.say(`/start ${code}`);
+    const gid = (await env.db.getGameByCode(code))!.id;
+    await wishAll(code);
+
+    await ann.say("/start");
+    expect(ann.last()).toContain("Ваш список: готов ✅");
+    await ann.click("📝 Мой список");
+    await ann.click("1.");
+    await ann.click("Удалить");
+    await ann.click("В меню игры");
+    expect(ann.last()).toContain("Ваш список: ещё не готов");
+
+    await bob.say("/start");
+    await bob.click("Вернуть список в работу");
+    expect(bob.last()).toContain("ещё не готов");
+
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    expect(org.last()).toMatch(/Аня.*— нет подарков/);
+    expect(org.last()).toMatch(/Боб.*— не отметил\(а\) список готовым/);
+    expect((await env.db.getGame(gid))!.status).toBe("open");
   });
 });
 
@@ -588,8 +645,74 @@ describe("граничные случаи (ревью)", () => {
     await org.click("Управление");
     n = env.sent.length;
     await org.click("Провести жеребьёвку"); // ни у кого нет подарков -> длинный список «кто не добавил»
-    expect(shown(n)).toContain("не все добавили подарки");
+    expect(shown(n)).toContain("не все списки готовы");
     for (let i = 2; i <= 50; i++) expect(shown(n)).toContain(`Игрок${i}я`);
     expect(org.hasButton("Управление")).toBe(true); // клавиатура на последнем сообщении
+  });
+});
+
+describe("список участников у организатора", () => {
+  it("видно, у кого сколько подарков и готов ли список", async () => {
+    const org = env.user(1, "Орг"), ann = env.user(2, "Аня"), bob = env.user(3, "Боб");
+    const code = await createGame(org);
+    for (const u of [ann, bob]) await u.say(`/start ${code}`);
+    const gid = (await env.db.getGameByCode(code))!.id;
+    for (const t of ["книга", "носки"]) await env.db.addWish(gid, 2, t);
+    await env.db.setReady(gid, 2, true);
+    await env.db.addWish(gid, 1, "кофе"); // у организатора подарок есть, но не готов
+
+    await org.click("Управление");
+    await org.click("Участники");
+    const text = org.last();
+    expect(text).toMatch(/1\. Орг \(@user1\) 👑 — 1 подарок ⏳/);
+    expect(text).toMatch(/2\. Аня \(@user2\) — 2 подарка ✅/);
+    expect(text).toMatch(/3\. Боб \(@user3\) — нет подарков ⏳/);
+    expect(text).toContain("✅ — список готов");
+  });
+
+  it("после жеребьёвки показываются подарки без отметок готовности", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "А"), b = env.user(3, "Б");
+    const code = await createGame(org);
+    for (const u of [a, b]) await u.say(`/start ${code}`);
+    await wishAll(code);
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    await org.click("Запустить");
+    await org.click("Управление");
+    await org.click("Участники");
+    expect(org.last()).toMatch(/А \(@user2\) — 1 подарок$/m);
+    expect(org.last()).not.toMatch(/[✅⏳] *$/m);
+  });
+});
+
+describe("приглашение участником", () => {
+  it("участник получает ссылку отдельным сообщением; по ней можно вступить; после жеребьёвки кнопки нет", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "Аня");
+    const code = await createGame(org);
+    await a.say(`/start ${code}`);
+    const gid = (await env.db.getGameByCode(code))!.id;
+    expect(a.hasButton("Пригласить участников")).toBe(true);
+
+    await a.click("Пригласить участников");
+    const link = `https://t.me/${BOT_USERNAME}?start=${code}`;
+    const mine = env.sent.filter((s) => s.chat === 2).map((s) => s.text);
+    expect(mine.at(-1)).toBe(link); // ссылка — отдельное чистое сообщение, без лишнего текста
+    expect(mine.at(-2)).toContain("Перешлите друзьям");
+
+    const friend = env.user(7, "Друг");
+    await friend.say(`/start ${code}`); // тот, кто пришёл по ссылке участника
+    expect(await env.db.isPlayer(gid, 7)).toBe(true);
+    expect(org.inbox().some((m) => m.includes("Новый участник") && m.includes("Друг"))).toBe(true);
+
+    await wishAll(code);
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    await org.click("Запустить");
+    await a.say("/start");
+    expect(a.hasButton("Пригласить участников")).toBe(false);
+    await a.rawCallback(`il:${gid}`);
+    expect(env.alerts.at(-1)).toContain("поздно");
+    await env.user(8, "Чужой").rawCallback(`il:${gid}`);
+    expect(env.alerts.at(-1)).toContain("не участвуете");
   });
 });

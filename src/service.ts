@@ -1,5 +1,5 @@
 import { MAX_PLAYERS, MAX_RULES, MAX_TITLE_LEN, MAX_WISHES, MAX_WISH_LEN, MIN_PLAYERS } from "./config";
-import type { Database, Game, Player } from "./db";
+import { type Database, type Game, type Player, type PlayerReadiness, isReady } from "./db";
 import { DrawImpossible, makeDraw } from "./draw";
 
 export { DrawImpossible };
@@ -7,10 +7,10 @@ export { DrawImpossible };
 /** Ошибка, текст которой можно показать пользователю как есть. */
 export class UserError extends Error {}
 
-/** Жеребьёвка невозможна, пока не все добавили подарки. */
-export class MissingWishesError extends UserError {
-  constructor(public missing: Player[]) {
-    super("Не все участники добавили подарки.");
+/** Жеребьёвка невозможна, пока у кого-то список не готов (нет подарков или не нажато «готов»). */
+export class NotReadyError extends UserError {
+  constructor(public notReady: PlayerReadiness[]) {
+    super("Не все списки готовы.");
   }
 }
 
@@ -106,6 +106,23 @@ export class Service {
   async deleteWish(gameId: number, userId: number, wishId: number): Promise<void> {
     await this.ownWish(gameId, userId, wishId);
     await this.db.deleteWish(wishId);
+    // пустой список не может быть «готовым»
+    if (!(await this.db.getWishes(gameId, userId)).length) await this.db.setReady(gameId, userId, false);
+  }
+
+  /** «Мой список готов» / вернуть в работу. Возвращает, сколько списков готово и сколько участников всего. */
+  async setReady(gameId: number, userId: number, ready: boolean): Promise<{ ready: number; total: number }> {
+    const game = await this.gameForPlayer(gameId, userId);
+    if (game.status !== "open") throw new UserError("Жеребьёвка уже проведена.");
+    if (ready && !(await this.db.getWishes(gameId, userId)).length)
+      throw new UserError("Сначала добавьте хотя бы один подарок.");
+    await this.db.setReady(gameId, userId, ready);
+    return this.readiness(gameId);
+  }
+
+  async readiness(gameId: number): Promise<{ ready: number; total: number }> {
+    const all = await this.db.getReadiness(gameId);
+    return { ready: all.filter(isReady).length, total: all.length };
   }
 
   /** Кто дарит этому человеку (для анонимных уведомлений). null до жеребьёвки. */
@@ -136,8 +153,8 @@ export class Service {
     await this.organizerOpenGame(gameId, organizerId);
     const players = (await this.db.getPlayers(gameId)).map((p) => p.user_id);
     if (players.length < MIN_PLAYERS) throw new UserError(`Для жеребьёвки нужно минимум ${MIN_PLAYERS} участника.`);
-    const missing = await this.db.playersWithoutWishes(gameId);
-    if (missing.length) throw new MissingWishesError(missing);
+    const notReady = (await this.db.getReadiness(gameId)).filter((p) => !isReady(p));
+    if (notReady.length) throw new NotReadyError(notReady);
     const rules = (await this.db.getRules(gameId)).map((r) => r.members);
     const assignment = makeDraw(players, rules); // может бросить DrawImpossible
     if (!(await this.db.saveDraw(gameId, assignment))) {

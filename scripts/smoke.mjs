@@ -76,7 +76,7 @@ try {
   // не у всех есть подарки -> жеребьёвка не проходит, организатору перечислены неготовые
   await click(1, "Org", "mdy:1");
   await sleep(1500);
-  const refusal = log.find((l) => l.method === "editMessageText" && /не все добавили подарки/.test(l.text ?? ""));
+  const refusal = log.find((l) => l.method === "editMessageText" && /не все списки готовы/.test(l.text ?? ""));
   if (!refusal) fail("draw should be refused while someone has no gifts");
   if (log.some((l) => /Тайный Санта для/.test(l.text ?? ""))) fail("pairs must not be sent before everyone added gifts");
 
@@ -84,11 +84,20 @@ try {
   await say(1, "Org", "Coffee");
   await click(3, "Bob", "wa:1");
   await say(3, "Bob", "Tea");
+
+  // подарки есть у всех, но «список готов» нажали не все -> всё ещё нельзя
+  await click(2, "Ann", "rd:1");
+  await click(3, "Bob", "rd:1");
+  const before = log.filter((l) => /не все списки готовы/.test(l.text ?? "")).length;
+  await click(1, "Org", "mdy:1");
+  await sleep(1500);
+  if (log.filter((l) => /не все списки готовы/.test(l.text ?? "")).length <= before) fail("draw should be refused until the organizer marks the list ready");
+  await click(1, "Org", "rd:1");
   await click(1, "Org", "mdy:1");
   for (let i = 0; i < 40 && log.filter((l) => l.method === "sendMessage" && /Тайный Санта для/.test(l.text ?? "")).length < 3; i++) await sleep(500);
   const dms = log.filter((l) => l.method === "sendMessage" && /Тайный Санта для/.test(l.text ?? ""));
   const chats = new Set(dms.map((d) => d.chat_id));
   if (dms.length !== 3 || chats.size !== 3) fail(`expected 3 distinct DMs via queue, got ${dms.length} to ${[...chats]}`);
-  console.log("OK: webhook 401 on bad secret; draw refused until all added gifts; then delivered via queue to", [...chats].join(", "));
+  console.log("OK: webhook 401 on bad secret; draw refused until all lists are ready; then delivered via queue to", [...chats].join(", "));
   cleanup(0);
 } catch (e) { fail(String(e)); }

@@ -27,7 +27,11 @@ export interface Player {
   user_id: number;
   name: string;
   joined_at: number;
+  ready: number; // 1 — участник отметил «мой список готов»
 }
+export type PlayerReadiness = Player & { wish_count: number };
+/** Список считается готовым, только если участник нажал «готов» и в списке есть хотя бы один подарок. */
+export const isReady = (p: PlayerReadiness): boolean => p.ready === 1 && p.wish_count > 0;
 export interface Wish {
   id: number;
   game_id: number;
@@ -123,17 +127,22 @@ export class Database {
   async isPlayer(gameId: number, userId: number): Promise<boolean> {
     return (await this.getPlayer(gameId, userId)) !== null;
   }
-  /** Участники, у которых в списке нет ни одного подарка. */
-  async playersWithoutWishes(gameId: number): Promise<Player[]> {
+  /** Все участники с признаком готовности и числом подарков. */
+  async getReadiness(gameId: number): Promise<PlayerReadiness[]> {
     const r = await this.d
       .prepare(
-        `SELECT p.* FROM players p WHERE p.game_id = ?
-         AND NOT EXISTS (SELECT 1 FROM wishes w WHERE w.game_id = p.game_id AND w.user_id = p.user_id)
-         ORDER BY p.joined_at, p.user_id`,
+        `SELECT p.*, (SELECT COUNT(*) FROM wishes w WHERE w.game_id = p.game_id AND w.user_id = p.user_id) AS wish_count
+         FROM players p WHERE p.game_id = ? ORDER BY p.joined_at, p.user_id`,
       )
       .bind(gameId)
-      .all<Player>();
+      .all<PlayerReadiness>();
     return r.results;
+  }
+  async setReady(gameId: number, userId: number, ready: boolean): Promise<void> {
+    await this.d
+      .prepare("UPDATE players SET ready = ? WHERE game_id = ? AND user_id = ?")
+      .bind(ready ? 1 : 0, gameId, userId)
+      .run();
   }
 
   /** Убирает участника, его подарки и его из правил; правила < 2 человек удаляются. */

@@ -4,7 +4,8 @@ import type { Database } from "./db";
 import * as kb from "./keyboards";
 import type { Markup } from "./keyboards";
 import { type OutMsg, type Outbox } from "./outbox";
-import { DrawImpossible, MissingWishesError, Service, UserError } from "./service";
+import { type PlayerReadiness, isReady } from "./db";
+import { DrawImpossible, NotReadyError, Service, UserError } from "./service";
 import * as t from "./texts";
 
 const { e } = t;
@@ -100,8 +101,10 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   async function screenGame(ctx: Context, uid: number, gid: number): Promise<void> {
     const game = await svc.gameForPlayer(gid, uid);
     const isOrg = game.organizer_id === uid;
-    const [players, wishes] = await Promise.all([db.getPlayers(gid), db.getWishes(gid, uid)]);
-    await show(ctx, t.gameMenu(game, players.length, isOrg), kb.gameMenu(game, isOrg, wishes.length));
+    const all = await db.getReadiness(gid);
+    const me = all.find((p) => p.user_id === uid)!;
+    const ready = isReady(me);
+    await show(ctx, t.gameMenu(game, all.length, isOrg, ready), kb.gameMenu(game, isOrg, me.wish_count, ready));
   }
 
   async function screenWishlist(ctx: Context, uid: number, gid: number): Promise<void> {
@@ -113,17 +116,22 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   async function screenManage(ctx: Context, uid: number, gid: number): Promise<void> {
     const game = await svc.gameForOrganizer(gid, uid);
     const open = game.status === "open";
-    let text = t.gameMenu(game, (await db.getPlayers(gid)).length, true) + "\n\n⚙️ <b>Управление игрой</b>";
-    if (!open) text += "\nЖеребьёвка проведена: участников и правила менять нельзя.";
+    const { ready, total } = await svc.readiness(gid);
+    let text = t.gameMenu(game, total, true) + "\n\n⚙️ <b>Управление игрой</b>";
+    text += open ? `\nСписки готовы: ${ready} из ${total}` : "\nЖеребьёвка проведена: участников и правила менять нельзя.";
     await show(ctx, text, kb.manage(gid, open));
   }
 
   async function screenPlayers(ctx: Context, uid: number, gid: number): Promise<void> {
     const game = await svc.gameForOrganizer(gid, uid);
-    const plist = await db.getPlayers(gid);
-    const lines = plist.map((p, i) => `${i + 1}. ${t.listName(p.name)}${p.user_id === game.organizer_id ? " 👑" : ""}`);
+    const plist = await db.getReadiness(gid);
     const open = game.status === "open";
-    const parts = t.splitParts(`👥 <b>Участники</b> (${plist.length})\n`, lines, open ? "\n\nМожно убрать участника до жеребьёвки." : "");
+    const lines = plist.map((p, i) => t.playerLine(p, i + 1, game.organizer_id, open));
+    const parts = t.splitParts(
+      `👥 <b>Участники</b> (${plist.length})\n`,
+      lines,
+      open ? "\n\n✅ — список готов, ⏳ — ещё не готов. Можно убрать участника до жеребьёвки." : "",
+    );
     await showParts(ctx, parts, kb.players(gid, plist, game.organizer_id, open));
   }
 
@@ -198,6 +206,23 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     await screenWishlist(ctx, uidOf(ctx), gid);
     await notifySanta(ctx, gid, uidOf(ctx));
   });
+  route("rd", 1, async (ctx, gid) => {
+    const uid = uidOf(ctx);
+    const game = await svc.gameForPlayer(gid, uid);
+    const me = (await db.getReadiness(gid)).find((p) => p.user_id === uid)!;
+    const makeReady = !isReady(me);
+    const { ready, total } = await svc.setReady(gid, uid, makeReady);
+    await screenGame(ctx, uid, gid);
+    if (!makeReady) return;
+    // организатору — прогресс; когда готовы все, он узнаёт, что можно проводить жеребьёвку
+    const note =
+      ready === total
+        ? `🎉 Все списки готовы (${total} из ${total}) — можно проводить жеребьёвку в «Управление игрой».`
+        : uid !== game.organizer_id
+          ? `✅ ${e(nameOf(ctx))} отметил(а) список готовым. Готовы: ${ready} из ${total}.`
+          : null;
+    if (note) await safeSend(ctx, game.organizer_id, note);
+  });
   route("to", 1, (ctx, gid) => screenTarget(ctx, uidOf(ctx), gid));
   route("lv", 1, async (ctx, gid) => {
     await svc.gameForPlayer(gid, uidOf(ctx));
@@ -214,6 +239,15 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     await screenGames(ctx, uidOf(ctx));
   });
   route("m", 1, (ctx, gid) => screenManage(ctx, uidOf(ctx), gid));
+  // Приглашение доступно любому участнику открытой игры: ссылка отдельным сообщением — её удобно переслать.
+  route("il", 1, async (ctx, gid) => {
+    const game = await svc.gameForPlayer(gid, uidOf(ctx));
+    if (game.status !== "open") throw new UserError("Жеребьёвка проведена — приглашать уже поздно.");
+    await show(ctx, t.inviteIntro(game.title), kb.back(gid));
+    await ctx.api.sendMessage(uidOf(ctx), await inviteLink(ctx, game.code), {
+      link_preview_options: { is_disabled: true },
+    });
+  });
   route("ml", 1, async (ctx, gid) => {
     const game = await svc.gameForOrganizer(gid, uidOf(ctx));
     await show(ctx, t.invite(await inviteLink(ctx, game.code)), kb.backManage(gid));
@@ -294,16 +328,16 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     );
     await screenGames(ctx, uidOf(ctx));
   });
-  async function showMissingWishes(ctx: Context, gid: number, missing: { name: string }[]): Promise<void> {
+  async function showNotReady(ctx: Context, gid: number, notReady: PlayerReadiness[]): Promise<void> {
     const org = await db.getPlayer(gid, uidOf(ctx));
-    await showParts(ctx, t.missingWishesParts(missing.map((p) => p.name), org?.name), kb.backManage(gid));
+    await showParts(ctx, t.notReadyParts(notReady, org?.name), kb.backManage(gid));
   }
   route("md", 1, async (ctx, gid) => {
     const game = await svc.organizerOpenGame(gid, uidOf(ctx));
     const n = (await db.getPlayers(gid)).length;
     if (n < MIN_PLAYERS) throw new UserError(`Для жеребьёвки нужно минимум ${MIN_PLAYERS} участника, сейчас ${n}.`);
-    const missing = await db.playersWithoutWishes(gid);
-    if (missing.length) return showMissingWishes(ctx, gid, missing);
+    const notReady = (await db.getReadiness(gid)).filter((p) => !isReady(p));
+    if (notReady.length) return showNotReady(ctx, gid, notReady);
     await show(
       ctx,
       `Запустить жеребьёвку в «${e(game.title)}»? Участников: ${n}.\n\n` +
@@ -317,7 +351,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     try {
       assignment = await svc.runDraw(gid, uidOf(ctx));
     } catch (err) {
-      if (err instanceof MissingWishesError) return showMissingWishes(ctx, gid, err.missing);
+      if (err instanceof NotReadyError) return showNotReady(ctx, gid, err.notReady);
       if (err instanceof DrawImpossible) {
         await show(ctx, t.drawImpossible(game.title), kb.drawRetry(gid));
         return;
@@ -429,9 +463,10 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const uid = uidOf(ctx);
     await db.clearState(uid);
     const game = (await db.getGame(gid))!;
+    const me = (await db.getReadiness(gid)).find((p) => p.user_id === uid)!;
     await ctx.reply(`${saved} ✅\n\n` + t.myWishlist(await db.getWishes(gid, uid), game.status === "drawn"), {
       parse_mode: HTML,
-      reply_markup: kb.afterWish(gid),
+      reply_markup: kb.afterWish(gid, game.status === "open" ? isReady(me) : undefined),
     });
     await notifySanta(ctx, gid, uid);
   }

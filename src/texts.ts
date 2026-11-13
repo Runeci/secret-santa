@@ -1,6 +1,6 @@
 /** Тексты (parse_mode HTML). Всё пользовательское обязательно экранируется через e(). */
 import { MAX_NAME_LEN, MAX_WISHES, MAX_WISH_LEN } from "./config";
-import type { Game, Wish } from "./db";
+import type { Game, PlayerReadiness, Wish } from "./db";
 
 /** Сокращение по символам (эмодзи не режутся пополам). */
 export const cut = (text: string, n: number): string => {
@@ -60,10 +60,11 @@ export function splitParts(header: string, lines: string[], footer: string, limi
   return parts;
 }
 
-export function gameMenu(game: Game, players: number, isOrg: boolean): string {
+export function gameMenu(game: Game, players: number, isOrg: boolean, ready?: boolean): string {
   const status = game.status === "open" ? "ждём участников" : "жеребьёвка проведена ✅";
   const role = isOrg ? " · вы организатор" : "";
-  return `🎄 <b>${e(game.title)}</b>${role}\nУчастников: ${players} · ${status}`;
+  const mine = game.status === "open" && ready !== undefined ? `\nВаш список: ${ready ? "готов ✅" : "ещё не готов"}` : "";
+  return `🎄 <b>${e(game.title)}</b>${role}\nУчастников: ${players} · ${status}${mine}`;
 }
 
 const PREVIEW_LEN = 150;
@@ -79,6 +80,9 @@ export function myWishlist(wishes: Wish[], drawn: boolean): string {
   return head + tail;
 }
 
+export const inviteIntro = (title: string): string =>
+  `🔗 Приглашение в игру «${e(title)}». Перешлите друзьям следующее сообщение — по этой ссылке можно вступить в игру.`;
+
 export const invite = (link: string): string =>
   `🔗 Ссылка-приглашение:\n${e(link)}\n\nОтправьте её тем, кто будет участвовать.`;
 
@@ -93,15 +97,33 @@ export const assignmentParts = (title: string, receiverName: string, wishes: Wis
 export const wishesUpdatedParts = (receiverName: string, wishes: Wish[]): string[] =>
   splitParts(`🔔 <b>${e(receiverName)}</b> обновил(а) список желаний. Актуальный список:`, wishLines(wishes), "");
 
+/** «1 подарок», «2 подарка», «5 подарков». */
+export function giftsLabel(n: number): string {
+  if (n === 0) return "нет подарков";
+  const m10 = n % 10, m100 = n % 100;
+  const word = m10 === 1 && m100 !== 11 ? "подарок" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "подарка" : "подарков";
+  return `${n} ${word}`;
+}
+
+/** Строка участника для организатора: имя, число подарков, и (до жеребьёвки) готовность списка. */
+export function playerLine(p: PlayerReadiness, i: number, organizerId: number, open: boolean): string {
+  const status = open ? (p.ready === 1 && p.wish_count > 0 ? " ✅" : " ⏳") : "";
+  return `${i}. ${listName(p.name)}${p.user_id === organizerId ? " 👑" : ""} — ${giftsLabel(p.wish_count)}${status}`;
+}
+
 /** Имя в списках: экранировано и ограничено, чтобы список из 50 человек помещался в сообщение. */
 export const listName = (n: string): string => e(cut(n, 60));
 
-/** Организатору: кто ещё не добавил ни одного подарка (при необходимости — в нескольких сообщениях). */
-export function missingWishesParts(names: string[], organizerName?: string): string[] {
+/** Организатору: чьи списки ещё не готовы и почему (при необходимости — в нескольких сообщениях). */
+export function notReadyParts(items: PlayerReadiness[], organizerName?: string): string[] {
   return splitParts(
-    "🎁 Жеребьёвку пока провести нельзя: не все добавили подарки. Ждём:\n",
-    names.map((n) => `• ${listName(n)}${n === organizerName ? " (вы)" : ""}`),
-    "\n\nПопросите их открыть бота и добавить хотя бы один подарок («➕ Добавить подарок» в меню игры), затем запустите жеребьёвку снова.",
+    "🎁 Жеребьёвку пока провести нельзя: не все списки готовы. Ждём:\n",
+    items.map(
+      (p) =>
+        `• ${listName(p.name)}${p.name === organizerName ? " (вы)" : ""} — ` +
+        (p.wish_count === 0 ? "нет подарков" : "не отметил(а) список готовым"),
+    ),
+    "\n\nПопросите их добавить подарки и нажать «✅ Мой список готов» в меню игры, затем запустите жеребьёвку снова.",
   );
 }
 
