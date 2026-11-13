@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.png" alt="Тайный Санта" width="160"></p>
+
 # 🎅 Тайный Санта — Telegram-бот на Cloudflare Workers
 
 TypeScript, [grammY](https://grammy.dev), Cloudflare Workers + D1 (SQLite) + Queues. Работает через
@@ -5,6 +7,12 @@ webhook, не засыпает, помещается в бесплатный т�
 
 > Рядом лежит `python-oracle/` — первая версия на Python/aiogram для обычного сервера (VPS).
 > Для Cloudflare она не нужна.
+
+## Иконка
+
+`assets/icon.png` — оригинал. Для аватарки бота: `assets/avatar-640.png` (квадрат 640×640, углы залиты
+цветом фона, чтобы по краю круга не было белой каймы) и `assets/avatar-512.png`.
+Поставить: @BotFather → `/setuserpic` → выбрать бота → отправить картинку (как фото, не как файл).
 
 ## Развёртывание (около 15 минут)
 
