@@ -7,3 +7,5 @@ export const MAX_RULES = 30; // клавиатура правил: по кноп
 export const MAX_NAME_LEN = 40; // длина имени в списках (без @username)
 export const MAX_URL_LEN = 1500; // длинные ссылки магазинов с параметрами
 export const MAX_PRICE_LEN = 30;
+export const MIN_TZ = 0; // поддерживаемые часовые пояса организатора: UTC+0 … UTC+12
+export const MAX_TZ = 12; // (должны совпадать с часами запуска расписания в wrangler.toml)

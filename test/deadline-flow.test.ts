@@ -37,11 +37,12 @@ describe("Service.setDeadline", () => {
     const n = at("2026-11-12T23:00:00");
     await svc.setDeadline(gid, 1, { y: 2026, m: 11, d: 13 }, 3, n);
     await expect(svc.setDeadline(gid, 1, { y: 2026, m: 11, d: 12 }, 3, n)).rejects.toThrow(/прошла/);
-    // в UTC−5 в тот же момент ещё 12 ноября: 12.11 допустимо
-    await svc.setDeadline(gid, 1, { y: 2026, m: 11, d: 12 }, -5, n);
+    // в UTC+0 в тот же момент ещё 12 ноября: 12.11 допустимо
+    await svc.setDeadline(gid, 1, { y: 2026, m: 11, d: 12 }, 0, n);
   });
-  it("часовой пояс проверяется", async () => {
-    for (const tz of [15, -13, 2.5, NaN]) await expect(svc.setDeadline(gid, 1, { y: 2026, m: 12, d: 20 }, tz, NOW)).rejects.toThrow(/часовой пояс/);
+  it("часовой пояс проверяется: только UTC+0…+12", async () => {
+    for (const tz of [0, 12]) await svc.setDeadline(gid, 1, { y: 2026, m: 12, d: 20 }, tz, NOW);
+    for (const tz of [13, 15, -1, -5, -13, 2.5, NaN]) await expect(svc.setDeadline(gid, 1, { y: 2026, m: 12, d: 20 }, tz, NOW)).rejects.toThrow(/часовой пояс/);
   });
   it("после жеребьёвки менять и убирать нельзя", async () => {
     await svc.join((await svc.db.getGame(gid))!.code, 3, "Б");
@@ -151,9 +152,9 @@ describe("runReminders: кому и когда приходят напомина
     sent = [];
     expect(await runReminders(db, outbox, at("2026-11-14T08:00:00"))).toBe(3); // следующий час — отправили
   });
-  it("часовой пояс организатора: у UTC−5 суббота наступает позже", async () => {
-    await db.setDeadline(gid, "2026-11-25", -5, "2026-11-01");
-    expect(await runReminders(db, outbox, at("2026-11-14T07:00:00"))).toBe(0); // у организатора ещё пятница 02:00
-    expect(await runReminders(db, outbox, at("2026-11-14T15:00:00"))).toBe(3); // суббота 10:00
+  it("часовой пояс организатора: у UTC+10 суббота 10:00 наступает в полночь по UTC", async () => {
+    await db.setDeadline(gid, "2026-11-25", 10, "2026-11-01");
+    expect(await runReminders(db, outbox, at("2026-11-13T23:00:00"))).toBe(0); // у организатора суббота 09:00 — рано
+    expect(await runReminders(db, outbox, at("2026-11-14T00:00:00"))).toBe(3); // суббота 10:00
   });
 });

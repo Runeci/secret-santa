@@ -1,4 +1,4 @@
-import { MAX_PLAYERS, MAX_RULES, MAX_TITLE_LEN, MAX_WISHES, MAX_WISH_LEN, MIN_PLAYERS } from "./config";
+import { MAX_PLAYERS, MAX_RULES, MAX_TZ, MIN_TZ, MAX_TITLE_LEN, MAX_WISHES, MAX_WISH_LEN, MIN_PLAYERS } from "./config";
 import { type Database, type Game, type Player, type PlayerReadiness, isReady } from "./db";
 import { DrawImpossible, makeDraw } from "./draw";
 import { type YMD, dayNumber, localNow, parseDateInput, ymdToString } from "./dates";
@@ -100,7 +100,8 @@ export class Service {
   /** Ставит или меняет дедлайн (организатор, пока игра открыта). Конец дня — в часовом поясе organizer. */
   async setDeadline(gameId: number, organizerId: number, date: YMD, tzOffset: number, nowMs = Date.now()): Promise<Game> {
     await this.organizerOpenGame(gameId, organizerId);
-    if (!Number.isInteger(tzOffset) || tzOffset < -12 || tzOffset > 14) throw new UserError("Неверный часовой пояс.");
+    // поддерживаемые пояса совпадают с кнопками и с часами запуска расписания (см. wrangler.toml)
+    if (!Number.isInteger(tzOffset) || tzOffset < MIN_TZ || tzOffset > MAX_TZ) throw new UserError("Неверный часовой пояс.");
     // дата должна быть не в прошлом по местному времени (сегодня — можно)
     if (dayNumber(date) < dayNumber(localNow(nowMs, tzOffset)))
       throw new UserError("Эта дата уже прошла в выбранном часовом поясе.");

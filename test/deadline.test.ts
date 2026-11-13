@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { MAX_TZ, MIN_TZ } from "../src/config";
 import { daysWord, localNow, parseDateInput, tzLabel, weekday } from "../src/dates";
 import { InvalidInput } from "../src/links";
 import { REMIND_HOUR, planReminders } from "../src/reminders";
@@ -109,5 +111,40 @@ describe("planReminders: суббота до дедлайна и день до �
   });
   it("високосный день", () => {
     expect(planReminders(g("2028-03-01"), at("2028-02-29T08:00:00"))).toMatchObject({ daysLeft: 1 });
+  });
+});
+
+describe("расписание cron покрывает все поддерживаемые часовые пояса", () => {
+  const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
+  const cron = /crons\s*=\s*\["([^"]+)"\]/.exec(toml)![1];
+  const [minute, hourField] = cron.split(" ");
+  const hours = new Set(
+    hourField.split(",").flatMap((part) => {
+      const [a, b] = part.split("-").map(Number);
+      return Array.from({ length: (b ?? a) - a + 1 }, (_, i) => a + i);
+    }),
+  );
+
+  it("запуск в начале часа", () => expect(minute).toBe("0"));
+  it("для каждого пояса есть запуск ровно в 10:00 по местному времени", () => {
+    for (let tz = MIN_TZ; tz <= MAX_TZ; tz++) {
+      const utcHour = (REMIND_HOUR - tz + 24) % 24;
+      expect(hours.has(utcHour), `UTC${tz >= 0 ? "+" : ""}${tz}: нужен запуск в ${utcHour}:00 UTC`).toBe(true);
+    }
+  });
+  it("лишних запусков нет: каждый час расписания нужен какому-то поясу", () => {
+    const needed = new Set(Array.from({ length: MAX_TZ - MIN_TZ + 1 }, (_, i) => (REMIND_HOUR - (MIN_TZ + i) + 24) % 24));
+    expect([...hours].sort((a, b) => a - b)).toEqual([...needed].sort((a, b) => a - b));
+  });
+  it("если рассылка в 10:00 не удалась, до конца того же местного дня есть ещё запуск (повтор)", () => {
+    for (let tz = MIN_TZ; tz <= MAX_TZ; tz++) {
+      const first = (REMIND_HOUR - tz + 24) % 24; // час UTC, когда у организатора 10:00
+      // следующий запуск через 1…13 часов — это ещё тот же местный день (до 23:00)
+      const retries = [...hours].filter((h) => {
+        const delta = (h - first + 24) % 24;
+        return delta >= 1 && delta <= 23 - REMIND_HOUR;
+      });
+      expect(retries.length, `UTC+${tz}`).toBeGreaterThan(0);
+    }
   });
 });
