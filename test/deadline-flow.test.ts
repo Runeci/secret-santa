@@ -81,26 +81,26 @@ describe("runReminders: кому и когда приходят напомина
   const chats = () => sent.map((m) => m.chat).sort();
 
   it("в обычный день — тишина; в субботу напоминают только не готовым", async () => {
-    expect(await runReminders(db, outbox, at("2026-11-18T07:00:00"))).toBe(0); // среда
-    expect(await runReminders(db, outbox, at("2026-11-14T07:00:00"))).toBe(3); // суббота 10:00 по UTC+3
+    expect(await runReminders(db, outbox, at("2026-11-18T09:00:00"))).toBe(0); // среда
+    expect(await runReminders(db, outbox, at("2026-11-14T09:00:00"))).toBe(3); // суббота 12:00 по UTC+3
     expect(chats()).toEqual([1, 3, 4]); // организатор тоже участник и тоже не готов; готовый «2» не беспокоим
     expect(sent.every((m) => m.markup && /Открыть игру/.test(JSON.stringify(m.markup)))).toBe(true);
     expect(sent[0].text).toContain("до дедлайна 11 дней");
     expect(plain(sent[0].text)).toContain("25.11.2026");
   });
   it("в тот же день повторно не шлёт (почасовой запуск), на следующей неделе — снова", async () => {
-    await runReminders(db, outbox, at("2026-11-14T07:00:00"));
+    await runReminders(db, outbox, at("2026-11-14T09:00:00"));
     sent = [];
-    expect(await runReminders(db, outbox, at("2026-11-14T08:00:00"))).toBe(0);
+    expect(await runReminders(db, outbox, at("2026-11-14T10:00:00"))).toBe(0);
     expect(await runReminders(db, outbox, at("2026-11-14T15:00:00"))).toBe(0);
     await db.setReady(gid, 3, false); // ничего не поменялось
     await db.addWish(gid, 3, "чай");
     await db.setReady(gid, 3, true); // участник 3 стал готов
-    expect(await runReminders(db, outbox, at("2026-11-21T07:00:00"))).toBe(2); // следующая суббота: 1 и 4
+    expect(await runReminders(db, outbox, at("2026-11-21T09:00:00"))).toBe(2); // следующая суббота: 1 и 4
     expect(chats()).toEqual([1, 4]);
   });
   it("за день до дедлайна: напоминания не готовым + сводка организатору", async () => {
-    const n = await runReminders(db, outbox, at("2026-11-24T07:00:00")); // вторник
+    const n = await runReminders(db, outbox, at("2026-11-24T09:00:00")); // вторник
     const toOrg = sent.filter((m) => m.chat === 1).map((m) => plain(m.text));
     expect(n).toBe(4); // 1, 3, 4 — напоминания; ещё одна сводка организатору
     expect(toOrg.length).toBe(2);
@@ -109,27 +109,27 @@ describe("runReminders: кому и когда приходят напомина
     expect(sent.filter((m) => m.chat === 3).length).toBe(1);
   });
   it("в день дедлайна — только сводка организатору; после — тишина", async () => {
-    expect(await runReminders(db, outbox, at("2026-11-25T07:00:00"))).toBe(1);
+    expect(await runReminders(db, outbox, at("2026-11-25T09:00:00"))).toBe(1);
     expect(sent[0].chat).toBe(1);
     expect(plain(sent[0].text)).toContain("сегодня последний день");
     sent = [];
-    expect(await runReminders(db, outbox, at("2026-11-26T07:00:00"))).toBe(0);
+    expect(await runReminders(db, outbox, at("2026-11-26T09:00:00"))).toBe(0);
   });
   it("все готовы — никому ничего", async () => {
     for (const u of [1, 3, 4]) {
       await db.addWish(gid, u, "подарок");
       await db.setReady(gid, u, true);
     }
-    expect(await runReminders(db, outbox, at("2026-11-14T07:00:00"))).toBe(0);
-    expect(await runReminders(db, outbox, at("2026-11-24T07:00:00"))).toBe(0);
-    expect(await runReminders(db, outbox, at("2026-11-25T07:00:00"))).toBe(0);
+    expect(await runReminders(db, outbox, at("2026-11-14T09:00:00"))).toBe(0);
+    expect(await runReminders(db, outbox, at("2026-11-24T09:00:00"))).toBe(0);
+    expect(await runReminders(db, outbox, at("2026-11-25T09:00:00"))).toBe(0);
   });
   it("разыгранные игры и игры без дедлайна не трогаем", async () => {
     const svc = new Service(db);
     const other = await svc.createGame("Без дедлайна", 1, "Орг");
     await svc.join(other.code, 2, "U2");
     sent = [];
-    await runReminders(db, outbox, at("2026-11-14T07:00:00"));
+    await runReminders(db, outbox, at("2026-11-14T09:00:00"));
     expect(sent.every((m) => !plain(m.text).includes("Без дедлайна"))).toBe(true);
   });
   it("после жеребьёвки напоминания прекращаются", async () => {
@@ -139,7 +139,7 @@ describe("runReminders: кому и когда приходят напомина
     }
     await new Service(db).runDraw(gid, 1);
     expect((await db.gamesWithDeadline()).length).toBe(0);
-    expect(await runReminders(db, outbox, at("2026-11-24T07:00:00"))).toBe(0);
+    expect(await runReminders(db, outbox, at("2026-11-24T09:00:00"))).toBe(0);
   });
   it("сбой рассылки не помечает день: повтор в следующий запуск", async () => {
     const failing: Outbox = {
@@ -147,14 +147,14 @@ describe("runReminders: кому и когда приходят напомина
         throw new Error("queue down");
       },
     };
-    await expect(runReminders(db, failing, at("2026-11-14T07:00:00"))).rejects.toThrow("queue down");
+    await expect(runReminders(db, failing, at("2026-11-14T09:00:00"))).rejects.toThrow("queue down");
     expect((await db.getGame(gid))!.last_reminded_day).toBe("2026-11-01"); // не изменилось
     sent = [];
-    expect(await runReminders(db, outbox, at("2026-11-14T08:00:00"))).toBe(3); // следующий час — отправили
+    expect(await runReminders(db, outbox, at("2026-11-14T10:00:00"))).toBe(3); // следующий час — отправили
   });
-  it("часовой пояс организатора: у UTC+10 суббота 10:00 наступает в полночь по UTC", async () => {
+  it("часовой пояс организатора: у UTC+10 суббота 12:00 наступает в 02:00 по UTC", async () => {
     await db.setDeadline(gid, "2026-11-25", 10, "2026-11-01");
     expect(await runReminders(db, outbox, at("2026-11-13T23:00:00"))).toBe(0); // у организатора суббота 09:00 — рано
-    expect(await runReminders(db, outbox, at("2026-11-14T00:00:00"))).toBe(3); // суббота 10:00
+    expect(await runReminders(db, outbox, at("2026-11-14T02:00:00"))).toBe(3); // суббота 12:00
   });
 });

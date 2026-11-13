@@ -57,24 +57,24 @@ describe("localNow / вспомогательные", () => {
 });
 
 describe("planReminders: суббота до дедлайна и день до него", () => {
-  // 14.11.2026 — суббота; 10:00 по UTC+3 = 07:00 UTC
+  // 14.11.2026 — суббота; 12:00 по UTC+3 = 09:00 UTC
   const g = (deadline: string | null, tz = 3, last: string | null = null) => ({ deadline_date: deadline, tz_offset: tz, last_reminded_day: last });
-  const SAT_MORNING = at("2026-11-14T07:00:00");
+  const SAT_MORNING = at("2026-11-14T09:00:00");
 
   it("нет дедлайна — ничего", () => expect(planReminders(g(null), SAT_MORNING)).toBeNull());
 
   it("суббота утром (дедлайн далеко): напоминают участникам, организатору сводки нет", () => {
     expect(planReminders(g("2026-11-25"), SAT_MORNING)).toEqual({ today: "2026-11-14", daysLeft: 11, participants: true, organizer: false });
   });
-  it("до 10:00 по местному времени — рано", () => {
-    expect(planReminders(g("2026-11-25"), at("2026-11-14T06:59:00"))).toBeNull();
-    expect(REMIND_HOUR).toBe(10);
+  it("до 12:00 по местному времени — рано", () => {
+    expect(planReminders(g("2026-11-25"), at("2026-11-14T08:59:00"))).toBeNull();
+    expect(REMIND_HOUR).toBe(12);
   });
   it("в обычный день недели с далёким дедлайном — ничего", () => {
-    expect(planReminders(g("2026-11-25"), at("2026-11-18T07:00:00"))).toBeNull(); // среда
+    expect(planReminders(g("2026-11-25"), at("2026-11-18T09:00:00"))).toBeNull(); // среда
   });
   it("за день до дедлайна — участникам и организатору, в любой день недели", () => {
-    expect(planReminders(g("2026-11-25"), at("2026-11-24T08:00:00"))).toEqual({ today: "2026-11-24", daysLeft: 1, participants: true, organizer: true });
+    expect(planReminders(g("2026-11-25"), at("2026-11-24T10:00:00"))).toEqual({ today: "2026-11-24", daysLeft: 1, participants: true, organizer: true });
   });
   it("в день дедлайна — только сводка организатору", () => {
     expect(planReminders(g("2026-11-25"), at("2026-11-25T09:00:00"))).toEqual({ today: "2026-11-25", daysLeft: 0, participants: false, organizer: true });
@@ -96,21 +96,21 @@ describe("planReminders: суббота до дедлайна и день до �
     expect(planReminders(g("2026-11-25", 3, "2026-11-07"), SAT_MORNING)).not.toBeNull();
   });
   it("граница суток по часовому поясу: суббота в UTC ≠ суббота у организатора", () => {
-    // UTC+3: пятница 21:30 UTC уже суббота 00:30 — но рано (до 10:00)
+    // UTC+3: пятница 21:30 UTC уже суббота 00:30 — но рано (до 12:00)
     expect(planReminders(g("2026-11-25"), at("2026-11-13T21:30:00"))).toBeNull();
     // UTC−5: суббота 03:00 UTC — у организатора ещё пятница 22:00 → не суббота
     expect(planReminders(g("2026-11-25", -5), at("2026-11-14T03:00:00"))).toBeNull();
-    // UTC−5: суббота 15:00 UTC = суббота 10:00 у организатора → напоминаем
-    expect(planReminders(g("2026-11-25", -5), at("2026-11-14T15:00:00"))).toMatchObject({ today: "2026-11-14", participants: true });
-    // UTC+10: пятница 23:00 UTC = суббота 09:00 → ещё рано; суббота 00:00 UTC = 10:00 → можно
+    // UTC−5: суббота 17:00 UTC = суббота 12:00 у организатора → напоминаем
+    expect(planReminders(g("2026-11-25", -5), at("2026-11-14T17:00:00"))).toMatchObject({ today: "2026-11-14", participants: true });
+    // UTC+10: пятница 23:00 UTC = суббота 09:00 → ещё рано; суббота 02:00 UTC = 12:00 → можно
     expect(planReminders(g("2026-11-25", 10), at("2026-11-13T23:00:00"))).toBeNull();
-    expect(planReminders(g("2026-11-25", 10), at("2026-11-14T00:00:00"))).toMatchObject({ today: "2026-11-14", participants: true });
+    expect(planReminders(g("2026-11-25", 10), at("2026-11-14T02:00:00"))).toMatchObject({ today: "2026-11-14", participants: true });
   });
   it("переход через год", () => {
-    expect(planReminders(g("2027-01-01"), at("2026-12-31T08:00:00"))).toMatchObject({ daysLeft: 1, participants: true, organizer: true });
+    expect(planReminders(g("2027-01-01"), at("2026-12-31T09:00:00"))).toMatchObject({ daysLeft: 1, participants: true, organizer: true });
   });
   it("високосный день", () => {
-    expect(planReminders(g("2028-03-01"), at("2028-02-29T08:00:00"))).toMatchObject({ daysLeft: 1 });
+    expect(planReminders(g("2028-03-01"), at("2028-02-29T09:00:00"))).toMatchObject({ daysLeft: 1 });
   });
 });
 
@@ -126,19 +126,20 @@ describe("расписание cron покрывает все поддержив
   );
 
   it("запуск в начале часа", () => expect(minute).toBe("0"));
-  it("для каждого пояса есть запуск ровно в 10:00 по местному времени", () => {
+  it("для каждого пояса есть запуск ровно в 12:00 по местному времени", () => {
     for (let tz = MIN_TZ; tz <= MAX_TZ; tz++) {
       const utcHour = (REMIND_HOUR - tz + 24) % 24;
       expect(hours.has(utcHour), `UTC${tz >= 0 ? "+" : ""}${tz}: нужен запуск в ${utcHour}:00 UTC`).toBe(true);
     }
   });
-  it("лишних запусков нет: каждый час расписания нужен какому-то поясу", () => {
-    const needed = new Set(Array.from({ length: MAX_TZ - MIN_TZ + 1 }, (_, i) => (REMIND_HOUR - (MIN_TZ + i) + 24) % 24));
-    expect([...hours].sort((a, b) => a - b)).toEqual([...needed].sort((a, b) => a - b));
+  it("лишних запусков нет: каждый час — это нужный запуск или повтор не позже чем через 2 часа после нужного", () => {
+    const needed = Array.from({ length: MAX_TZ - MIN_TZ + 1 }, (_, i) => (REMIND_HOUR - (MIN_TZ + i) + 24) % 24);
+    for (const h of hours) expect(needed.some((n) => (h - n + 24) % 24 <= 2), `${h}:00 UTC лишний`).toBe(true);
+    expect(hours.size).toBeLessThanOrEqual(needed.length + 2);
   });
-  it("если рассылка в 10:00 не удалась, до конца того же местного дня есть ещё запуск (повтор)", () => {
+  it("если рассылка в 12:00 не удалась, до конца того же местного дня есть ещё запуск (повтор)", () => {
     for (let tz = MIN_TZ; tz <= MAX_TZ; tz++) {
-      const first = (REMIND_HOUR - tz + 24) % 24; // час UTC, когда у организатора 10:00
+      const first = (REMIND_HOUR - tz + 24) % 24; // час UTC, когда у организатора 12:00
       // следующий запуск через 1…13 часов — это ещё тот же местный день (до 23:00)
       const retries = [...hours].filter((h) => {
         const delta = (h - first + 24) % 24;

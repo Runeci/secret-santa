@@ -6,8 +6,8 @@ import * as kb from "./keyboards";
 import type { OutMsg, Outbox } from "./outbox";
 import * as t from "./texts";
 
-/** Напоминания приходят утром по местному времени организатора. */
-export const REMIND_HOUR = 10;
+/** Напоминания приходят в 12:00 по местному времени организатора. */
+export const REMIND_HOUR = 12;
 
 export interface ReminderPlan {
   today: string; // местный день (YYYY-MM-DD) — отметка «уже напомнили»

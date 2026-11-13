@@ -170,7 +170,7 @@ export function deadlineScreen(game: Game, nowMs: number): string {
     "\n\nБот напоминает тем, кто не нажал «✅ Мой список готов»: по субботам до дедлайна и за день до него. " +
     "Вам, организатору, — сводка за день до дедлайна и в его день.";
   if (!game.deadline_date) return head + "Дедлайн не задан." + rules;
-  return `${head}${deadlineLine(game, nowMs)}\nЧасовой пояс: ${tzLabel(game.tz_offset)} (напоминания около 10:00 по нему)${rules}`;
+  return `${head}${deadlineLine(game, nowMs)}\nЧасовой пояс: ${tzLabel(game.tz_offset)} (напоминания около 12:00 по нему)${rules}`;
 }
 
 export const deadlineSetNotice = (title: string, date: string, tz: number): string =>

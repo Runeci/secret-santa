@@ -574,7 +574,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
         await svc.organizerOpenGame(st.data.gid, uid);
         await db.clearState(uid);
         await ctx.reply(
-          `Дедлайн: ${formatRu(ymdToString({ y, m, d }))}.\nВ каком часовом поясе считать конец дня? Напоминания придут около 10:00 по этому времени.`,
+          `Дедлайн: ${formatRu(ymdToString({ y, m, d }))}.\nВ каком часовом поясе считать конец дня? Напоминания придут около 12:00 по этому времени.`,
           { reply_markup: kb.tzPicker(st.data.gid, y * 10000 + m * 100 + d) },
         );
       } else if (st.state === "wish_link" || st.state === "wish_price") {
