@@ -467,16 +467,22 @@ describe("кнопка «Мой список готов»", () => {
     const gid = (await env.db.getGameByCode(code))!.id;
     expect(ann.last()).toContain("Ваш список: ещё не готов");
 
+    // в меню игры кнопки готовности нет: она только на экране «Мой список»
+    expect(ann.hasButton("Мой список готов")).toBe(false);
+    await ann.click("📝 Мой список");
+    expect(ann.hasButton("Мой список готов")).toBe(true);
+
     // с пустым списком отметить нельзя
     await ann.click("Мой список готов");
     expect(env.alerts.at(-1)).toContain("хотя бы один подарок");
 
-    // подарок добавлен -> кнопка есть сразу в сообщении «Добавлено»
+    // подарок добавлен; в сообщении «Добавлено» кнопки готовности тоже нет, она на экране списка
     await ann.click("Добавить подарок");
     await ann.say("книга");
-    expect(ann.hasButton("Мой список готов")).toBe(true);
+    expect(ann.hasButton("Мой список готов")).toBe(false);
+    await ann.click("📝 Мой список");
     await ann.click("Мой список готов");
-    expect(ann.last()).toContain("Ваш список: готов ✅");
+    expect(ann.last()).toContain("Список: готов ✅"); // остались на экране списка
     expect(ann.hasButton("Вернуть список в работу")).toBe(true);
     expect(org.inbox().some((m) => m.includes("Аня") && m.includes("отметил(а) список готовым") && m.includes("Готовы: 1 из 3"))).toBe(true);
 
@@ -499,6 +505,7 @@ describe("кнопка «Мой список готов»", () => {
     await org.click("Провести жеребьёвку");
     expect(org.last()).toMatch(/Боб \(@user3\) — не отметил\(а\) список готовым/);
 
+    await bob.click("📝 Мой список");
     await bob.click("Мой список готов");
     expect(org.inbox().some((m) => m.includes("Готовы: 2 из 3"))).toBe(true);
 
@@ -506,19 +513,23 @@ describe("кнопка «Мой список готов»", () => {
     await org.say("/start");
     await org.click("Добавить подарок");
     await org.say("кофе");
+    await org.click("📝 Мой список");
     await org.click("Мой список готов");
     expect(org.inbox().some((m) => m.includes("Все списки готовы") && m.includes("3 из 3"))).toBe(true);
 
+    await org.click("В меню игры"); // организатор остался на экране своего списка
     await org.click("Управление");
     await org.click("Провести жеребьёвку");
     await org.click("Запустить");
     expect(org.last()).toContain("Жеребьёвка проведена");
     expect((await env.db.getGame(gid))!.status).toBe("drawn");
 
-    // после жеребьёвки кнопки готовности нет
+    // после жеребьёвки кнопки готовности нет и на экране списка
     await ann.say("/start");
+    await ann.click("📝 Мой список");
     expect(ann.hasButton("Мой список готов")).toBe(false);
     expect(ann.hasButton("Вернуть список в работу")).toBe(false);
+    await ann.click("В меню игры");
     expect(ann.last()).not.toContain("Ваш список:");
   });
 
@@ -534,10 +545,12 @@ describe("кнопка «Мой список готов»", () => {
     await ann.click("📝 Мой список");
     await ann.click("1.");
     await ann.click("Удалить");
-    await ann.click("В меню игры");
-    expect(ann.last()).toContain("Ваш список: готов ✅"); // сама не сбросилась
-    expect(ann.last()).toContain("подарков в нём нет");
+    expect(ann.last()).toContain("Список: готов ✅"); // сама не сбросилась (мы остались на экране списка)
     expect(ann.hasButton("Вернуть список в работу")).toBe(true); // и вернуть в работу можно
+    await ann.click("В меню игры");
+    expect(ann.last()).toContain("Ваш список: готов ✅");
+    expect(ann.last()).toContain("подарков в нём нет");
+    await ann.click("📝 Мой список");
 
     await org.click("Управление");
     await org.click("Провести жеребьёвку");
@@ -545,9 +558,10 @@ describe("кнопка «Мой список готов»", () => {
     expect((await env.db.getGame(gid))!.status).toBe("open");
 
     await ann.click("Вернуть список в работу");
-    expect(ann.last()).toContain("ещё не готов");
+    expect(ann.last()).toContain("Список: ещё не готов");
 
     await bob.say("/start");
+    await bob.click("📝 Мой список");
     await bob.click("Вернуть список в работу");
     await org.click("Управление");
     await org.click("Провести жеребьёвку");
@@ -702,8 +716,11 @@ describe("приглашение участником", () => {
     await a.click("Пригласить участников");
     const link = `https://t.me/${BOT_USERNAME}?start=${code}`;
     const mine = env.sent.filter((s) => s.chat === 2).map((s) => s.text);
-    expect(mine.at(-1)).toBe(link); // ссылка — отдельное чистое сообщение, без лишнего текста
-    expect(mine.at(-2)).toContain("Перешлите друзьям");
+    expect(plain(mine.at(-1)!)).toContain(link); // ссылка — в отдельном сообщении для пересылки
+    expect(plain(mine.at(-1)!)).toContain("Приглашаю в игру");
+    // пересылаемое сообщение не содержит служебных слов для организатора
+    expect(plain(mine.at(-1)!)).not.toMatch(/организатор|жеребьёвк|Управление|Ваш список/i);
+    expect(mine.at(-2)).toContain("Перешлите");
 
     const friend = env.user(7, "Друг");
     await friend.say(`/start ${code}`); // тот, кто пришёл по ссылке участника
@@ -720,5 +737,120 @@ describe("приглашение участником", () => {
     expect(env.alerts.at(-1)).toContain("поздно");
     await env.user(8, "Чужой").rawCallback(`il:${gid}`);
     expect(env.alerts.at(-1)).toContain("не участвуете");
+  });
+});
+
+describe("ссылка и стоимость подарка в боте", () => {
+  it("добавление, проверка ввода, отмена, редактирование и удаление; Санта видит всё", async () => {
+    const org = env.user(1, "Орг"), ann = env.user(2, "Аня"), bob = env.user(3, "Боб");
+    const code = await createGame(org);
+    for (const u of [ann, bob]) await u.say(`/start ${code}`);
+    const gid = (await env.db.getGameByCode(code))!.id;
+
+    await ann.click("Добавить подарок");
+    await ann.say("Книга «Дюна»");
+    // сразу под сообщением «Добавлено» можно добавить ссылку и цену (необязательно)
+    expect(ann.hasButton("Добавить ссылку") && ann.hasButton("Добавить цену")).toBe(true);
+
+    await ann.click("Добавить ссылку");
+    await ann.say("купить книгу"); // не ссылка
+    expect(ann.last()).toContain("не похоже на ссылку");
+    await ann.say("ftp://example.com/x"); // состояние сохранилось, снова не ссылка
+    expect(ann.last()).toContain("http");
+    await ann.say("www.ozon.ru/product/dune?a=1&b=2");
+    expect(ann.last()).toContain("Ссылка сохранена");
+    expect(ann.last()).toContain("🔗 https://www.ozon.ru/product/dune?a=1&b=2");
+    expect(ann.hasButton("Изменить ссылку") && ann.hasButton("Убрать ссылку")).toBe(true);
+
+    await ann.click("Добавить цену");
+    await ann.say("дорого"); // нет цифр
+    expect(ann.last()).toContain("хотя бы одна цифра");
+    await ann.say("около 1 500 ₽");
+    expect(ann.last()).toContain("Стоимость сохранена");
+    expect(ann.last()).toContain("💰 около 1 500 ₽");
+
+    // отмена из ввода возвращает на карточку подарка
+    await ann.click("Изменить цену");
+    await ann.click("Отмена");
+    expect(ann.last()).toContain("Книга «Дюна»");
+    expect(ann.last()).toContain("🔗");
+
+    // в списке — коротко: цена и значок ссылки
+    await ann.click("К списку");
+    expect(ann.last()).toContain("1. Книга «Дюна» — около 1 500 ₽ 🔗");
+
+    // при жеребьёвке Санта получает подарок целиком: цена и полная ссылка
+    await wishAll(code);
+    await org.click("Управление");
+    await org.click("Провести жеребьёвку");
+    await org.click("Запустить");
+    const santa = (await env.db.getGiver(gid, 2))!;
+    const dm = env.sent.filter((s) => s.chat === santa && /Санта для/.test(plain(s.text))).map((s) => plain(s.text)).join("\n");
+    expect(dm).toContain("1. Книга «Дюна» — около 1 500 ₽");
+    expect(dm).toContain("🔗 https://www.ozon.ru/product/dune?a=1&b=2");
+
+    // после жеребьёвки правка ссылки уведомляет Санту; убрать ссылку тоже
+    let n = env.sent.length;
+    await ann.say("/start");
+    await ann.click("📝 Мой список");
+    await ann.click("1.");
+    await ann.click("Изменить ссылку");
+    await ann.say("https://market.yandex.ru/product/777");
+    let note = env.sent.slice(n).filter((s) => s.chat === santa).map((s) => plain(s.text)).join("\n");
+    expect(note).toContain("обновил");
+    expect(note).toContain("https://market.yandex.ru/product/777");
+
+    n = env.sent.length;
+    await ann.click("Убрать ссылку");
+    note = env.sent.slice(n).filter((s) => s.chat === santa).map((s) => plain(s.text)).join("\n");
+    expect(note).toContain("обновил");
+    expect(note).not.toContain("🔗");
+    expect(ann.hasButton("Убрать ссылку")).toBe(false);
+    expect(ann.hasButton("Добавить ссылку")).toBe(true);
+    await ann.click("Убрать цену");
+    expect(ann.last()).not.toContain("💰");
+  });
+
+  it("чужие кнопки ссылки/цены не работают", async () => {
+    const org = env.user(1, "Орг"), ann = env.user(2, "Аня");
+    const code = await createGame(org);
+    await ann.say(`/start ${code}`);
+    const gid = (await env.db.getGameByCode(code))!.id;
+    const wid = await env.db.addWish(gid, 2, "книга");
+    for (const data of [`wl:${gid}:${wid}`, `wp:${gid}:${wid}`, `wlx:${gid}:${wid}`, `wpx:${gid}:${wid}`]) {
+      env.alerts.length = 0;
+      await org.rawCallback(data);
+      expect(env.alerts.at(-1), data).toContain("Такого пункта");
+    }
+  });
+
+  it("слишком длинная ссылка отклоняется, длинная допустимая принимается", async () => {
+    const org = env.user(1, "Орг");
+    await createGame(org);
+    await org.click("Добавить подарок");
+    await org.say("штука");
+    await org.click("Добавить ссылку");
+    await org.say("https://shop.example/" + "a".repeat(1600));
+    expect(org.last()).toContain("Слишком длинная ссылка");
+    await org.say("https://shop.example/" + "a".repeat(1400));
+    expect(org.last()).toContain("Ссылка сохранена");
+  });
+});
+
+describe("приглашение: игрок не видит служебных текстов организатора", () => {
+  it("вступивший по ссылке не видит «вы организатор»; пересылаемое приглашение нейтральное", async () => {
+    const org = env.user(1, "Орг"), a = env.user(2, "Аня");
+    await org.say("/new");
+    await org.say("Новый год");
+    // при создании игры ссылка приходит отдельным сообщением-приглашением
+    const invites = env.sent.filter((s) => s.chat === 1).map((s) => plain(s.text)).filter((m) => m.includes("start="));
+    expect(invites.length).toBe(1);
+    expect(invites[0]).toContain("Приглашаю в игру");
+    expect(invites[0]).not.toMatch(/организатор|жеребьёвк|Управление|Ваш список/i);
+    const code = /start=(\S+)/.exec(invites[0])![1];
+
+    await a.say(`/start ${code}`);
+    expect(a.inbox().join("\n")).not.toMatch(/организатор|Управление/i);
+    expect(org.inbox().join("\n")).toContain("вы организатор"); // а у организатора — есть
   });
 });

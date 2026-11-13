@@ -16,10 +16,24 @@ interface Env {
 // Информация о боте (getMe) кешируется в изоляте, чтобы не тратить лишний запрос на каждый вызов.
 let botInfo: UserFromGetMe | undefined;
 
+/** Без превью ссылок: в списках подарков их много, карточки превью только загромождают чат. */
+function withoutLinkPreviews(bot: Bot): Bot {
+  bot.api.config.use((prev, method, payload, signal) =>
+    prev(
+      method,
+      method === "sendMessage" || method === "editMessageText"
+        ? ({ ...payload, link_preview_options: { is_disabled: true, ...(payload as any).link_preview_options } } as typeof payload)
+        : payload,
+      signal,
+    ),
+  );
+  return bot;
+}
+
 const apiOptions = (env: Env) => (env.TELEGRAM_API_ROOT ? { apiRoot: env.TELEGRAM_API_ROOT } : undefined);
 
 async function makeBot(env: Env): Promise<Bot> {
-  const bot = new Bot(env.BOT_TOKEN, { botInfo, client: apiOptions(env) });
+  const bot = withoutLinkPreviews(new Bot(env.BOT_TOKEN, { botInfo, client: apiOptions(env) }));
   if (!botInfo) {
     await bot.init();
     botInfo = bot.botInfo;
@@ -40,7 +54,7 @@ export default {
 
   /** Рассылка личных сообщений из очереди: по 10 за вызов, с повтором при лимитах Telegram. */
   async queue(batch: MessageBatch<OutMsg>, env: Env): Promise<void> {
-    const bot = new Bot(env.BOT_TOKEN, { botInfo, client: apiOptions(env) });
+    const bot = withoutLinkPreviews(new Bot(env.BOT_TOKEN, { botInfo, client: apiOptions(env) }));
     for (const msg of batch.messages) {
       try {
         const res = await deliver(bot.api, msg.body);

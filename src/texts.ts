@@ -16,6 +16,9 @@ export const WELCOME =
 export const NO_GAMES = "У вас пока нет игр. Создайте свою или перейдите по ссылке-приглашению.";
 export const ASK_TITLE = "Как назовём игру? Например: «Новый год в офисе». Отправьте название сообщением.";
 export const ASK_WISH = `Напишите один подарок, который хотели бы получить (до ${MAX_WISH_LEN} символов). Можно ссылку, размер, цвет — всё, что поможет Санте.`;
+export const ASK_LINK =
+  "Пришлите ссылку на подарок (карточка товара, магазин). Например: https://example.com/товар\nЕё можно будет изменить или убрать.";
+export const ASK_PRICE = "Напишите примерную стоимость, например: 3000 ₽ или около 50 $.\nЕё можно будет изменить или убрать.";
 export const CANCELLED = "Отменено.";
 export const UNKNOWN_TEXT = "Не понял 🤔 Откройте меню: /start";
 export const STALE = "Эта кнопка устарела. Откройте меню: /start";
@@ -31,8 +34,17 @@ const EMPTY = "<i>список пока пуст</i>";
 
 /** Строки списка целиком (для Санты: ссылки нельзя сокращать). */
 export function wishLines(wishes: Wish[]): string[] {
-  return wishes.length ? wishes.map((w, i) => `${i + 1}. ${e(w.text)}`) : [EMPTY];
+  return wishes.length ? wishes.map((w, i) => `${i + 1}. ${wishBody(w)}`) : [EMPTY];
 }
+
+/** Подарок целиком: название, стоимость и ссылка (ссылка не сокращается — Санте она нужна). */
+function wishBody(w: Wish): string {
+  return `${e(w.text)}${w.price ? ` — ${e(w.price)}` : ""}${w.url ? `\n🔗 ${e(w.url)}` : ""}`;
+}
+
+/** Карточка одного подарка. */
+export const wishCard = (w: Wish): string =>
+  `🎁 ${e(w.text)}${w.price ? `\n💰 ${e(w.price)}` : ""}${w.url ? `\n🔗 ${e(w.url)}` : ""}`;
 
 export function wishlist(wishes: Wish[]): string {
   return wishLines(wishes).join("\n");
@@ -73,9 +85,12 @@ export function gameMenu(game: Game, players: number, isOrg: boolean, ready?: bo
 
 const PREVIEW_LEN = 150;
 
-export function myWishlist(wishes: Wish[], drawn: boolean): string {
-  const lines = wishes.length ? wishes.map((w, i) => `${i + 1}. ${e(cut(w.text, PREVIEW_LEN))}`) : [EMPTY];
-  const head = `📝 <b>Ваш список подарков</b> (${wishes.length}/${MAX_WISHES})\n\n${lines.join("\n")}`;
+export function myWishlist(wishes: Wish[], drawn: boolean, ready?: boolean): string {
+  const lines = wishes.length
+    ? wishes.map((w, i) => `${i + 1}. ${e(cut(w.text, PREVIEW_LEN))}${w.price ? ` — ${e(w.price)}` : ""}${w.url ? " 🔗" : ""}`)
+    : [EMPTY];
+  const state = ready === undefined ? "" : `\nСписок: ${ready ? "готов ✅" : "ещё не готов"}`;
+  const head = `📝 <b>Ваш список подарков</b> (${wishes.length}/${MAX_WISHES})${state}\n\n${lines.join("\n")}`;
   if (!wishes.length) return head;
   let tail = "\n\nНажмите на пункт, чтобы изменить или удалить его.";
   if (wishes.some((w) => [...w.text].length > PREVIEW_LEN))
@@ -84,11 +99,13 @@ export function myWishlist(wishes: Wish[], drawn: boolean): string {
   return head + tail;
 }
 
+/** Подсказка организатору/участнику: что переслать. */
 export const inviteIntro = (title: string): string =>
-  `🔗 Приглашение в игру «${e(title)}». Перешлите друзьям следующее сообщение — по этой ссылке можно вступить в игру.`;
+  `🔗 Перешлите следующее сообщение тем, кого хотите пригласить в игру «${e(title)}»: по ссылке в нём можно вступить.`;
 
-export const invite = (link: string): string =>
-  `🔗 Ссылка-приглашение:\n${e(link)}\n\nОтправьте её тем, кто будет участвовать.`;
+/** Нейтральное приглашение, которое можно переслать как есть: без служебных слов про организатора. */
+export const inviteMessage = (title: string, link: string): string =>
+  `🎅 Приглашаю в игру «Тайный Санта»: «${e(title)}».\nПерейдите по ссылке, нажмите Start и добавьте подарки, которые хотите получить:\n${e(link)}`;
 
 /** Сообщение Санте: список целиком, при необходимости в нескольких сообщениях. */
 export const assignmentParts = (title: string, receiverName: string, wishes: Wish[]): string[] =>

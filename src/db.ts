@@ -37,6 +37,8 @@ export interface Wish {
   game_id: number;
   user_id: number;
   text: string;
+  url: string | null; // необязательная ссылка (проверена)
+  price: string | null; // необязательная стоимость
 }
 export interface Rule {
   id: number;
@@ -183,6 +185,12 @@ export class Database {
   }
   async updateWish(id: number, text: string): Promise<void> {
     await this.d.prepare("UPDATE wishes SET text = ? WHERE id = ?").bind(text, id).run();
+  }
+  async setWishLink(id: number, url: string | null): Promise<void> {
+    await this.d.prepare("UPDATE wishes SET url = ? WHERE id = ?").bind(url, id).run();
+  }
+  async setWishPrice(id: number, price: string | null): Promise<void> {
+    await this.d.prepare("UPDATE wishes SET price = ? WHERE id = ?").bind(price, id).run();
   }
   async deleteWish(id: number): Promise<void> {
     await this.d.prepare("DELETE FROM wishes WHERE id = ?").bind(id).run();

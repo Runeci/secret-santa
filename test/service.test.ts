@@ -279,3 +279,34 @@ describe("гонки при жеребьёвке и вступлении", () =>
     expect((await svc.db.getRules(game.id)).length).toBe(config.MAX_RULES);
   });
 });
+
+describe("ссылка и стоимость подарка", () => {
+  it("необязательны; проверяются; можно изменить и убрать", async () => {
+    const wid = await svc.addWish(game.id, ORG, "книга");
+    let w = (await svc.db.getWish(wid))!;
+    expect(w.url).toBeNull();
+    expect(w.price).toBeNull();
+
+    await svc.setWishLink(game.id, ORG, wid, "ozon.ru/product/1");
+    await svc.setWishPrice(game.id, ORG, wid, " 3 000  ₽ ");
+    w = (await svc.db.getWish(wid))!;
+    expect(w.url).toBe("https://ozon.ru/product/1");
+    expect(w.price).toBe("3 000 ₽");
+
+    await expect(svc.setWishLink(game.id, ORG, wid, "купить книгу")).rejects.toThrow(/не похоже на ссылку/);
+    await expect(svc.setWishLink(game.id, ORG, wid, "javascript:alert(1)")).rejects.toThrow(UserError);
+    await expect(svc.setWishPrice(game.id, ORG, wid, "дорого")).rejects.toThrow(/цифра/);
+    expect((await svc.db.getWish(wid))!.url).toBe("https://ozon.ru/product/1"); // неверный ввод ничего не меняет
+
+    await svc.setWishLink(game.id, ORG, wid, null);
+    await svc.setWishPrice(game.id, ORG, wid, null);
+    w = (await svc.db.getWish(wid))!;
+    expect([w.url, w.price]).toEqual([null, null]);
+  });
+  it("чужой подарок трогать нельзя", async () => {
+    await join(2);
+    const wid = await svc.addWish(game.id, 2, "книга");
+    await expect(svc.setWishLink(game.id, ORG, wid, "https://example.com")).rejects.toThrow(UserError);
+    await expect(svc.setWishPrice(game.id, ORG, wid, "100")).rejects.toThrow(UserError);
+  });
+});

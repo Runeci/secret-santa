@@ -1,6 +1,7 @@
 import { MAX_PLAYERS, MAX_RULES, MAX_TITLE_LEN, MAX_WISHES, MAX_WISH_LEN, MIN_PLAYERS } from "./config";
 import { type Database, type Game, type Player, type PlayerReadiness, isReady } from "./db";
 import { DrawImpossible, makeDraw } from "./draw";
+import { InvalidInput, normalizePrice, normalizeUrl } from "./links";
 
 export { DrawImpossible };
 
@@ -103,6 +104,25 @@ export class Service {
     await this.ownWish(gameId, userId, wishId);
     await this.db.updateWish(wishId, cleanText(text, MAX_WISH_LEN, "Пункт"));
   }
+  /** Ссылка к подарку (необязательная). null/пусто — убрать. Некорректная ссылка — UserError с подсказкой. */
+  async setWishLink(gameId: number, userId: number, wishId: number, input: string | null | undefined): Promise<void> {
+    await this.ownWish(gameId, userId, wishId);
+    await this.db.setWishLink(wishId, input == null ? null : this.valid(() => normalizeUrl(input)));
+  }
+  /** Стоимость подарка (необязательная). null — убрать. */
+  async setWishPrice(gameId: number, userId: number, wishId: number, input: string | null | undefined): Promise<void> {
+    await this.ownWish(gameId, userId, wishId);
+    await this.db.setWishPrice(wishId, input == null ? null : this.valid(() => normalizePrice(input)));
+  }
+  private valid<T>(fn: () => T): T {
+    try {
+      return fn();
+    } catch (err) {
+      if (err instanceof InvalidInput) throw new UserError(err.message);
+      throw err;
+    }
+  }
+
   async deleteWish(gameId: number, userId: number, wishId: number): Promise<void> {
     await this.ownWish(gameId, userId, wishId);
     await this.db.deleteWish(wishId);

@@ -107,14 +107,16 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     await show(
       ctx,
       t.gameMenu(game, all.length, isOrg, ready, me.wish_count),
-      kb.gameMenu(game, isOrg, me.wish_count, ready),
+      kb.gameMenu(game, isOrg, me.wish_count),
     );
   }
 
   async function screenWishlist(ctx: Context, uid: number, gid: number): Promise<void> {
     const game = await svc.gameForPlayer(gid, uid);
     const wishes = await db.getWishes(gid, uid);
-    await show(ctx, t.myWishlist(wishes, game.status === "drawn"), kb.myWishlist(gid, wishes));
+    const me = (await db.getReadiness(gid)).find((p) => p.user_id === uid)!;
+    const ready = game.status === "open" ? me.ready === 1 : undefined; // после жеребьёвки кнопки нет
+    await show(ctx, t.myWishlist(wishes, game.status === "drawn", ready), kb.myWishlist(gid, wishes, ready));
   }
 
   async function screenManage(ctx: Context, uid: number, gid: number): Promise<void> {
@@ -179,6 +181,19 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     return `https://t.me/${ctx.me.username}?start=${code}`;
   }
 
+  /** Приглашение отдельным сообщением: его удобно переслать, в нём нет служебных текстов для организатора. */
+  async function sendInvite(ctx: Context, game: { title: string; code: string }): Promise<void> {
+    await ctx.api.sendMessage(uidOf(ctx), t.inviteMessage(game.title, await inviteLink(ctx, game.code)), {
+      parse_mode: HTML,
+      link_preview_options: { is_disabled: true },
+    });
+  }
+
+  async function showWishCard(ctx: Context, gid: number, wid: number): Promise<void> {
+    const wish = await svc.ownWish(gid, uidOf(ctx), wid);
+    await show(ctx, t.wishCard(wish), kb.wishItem(gid, wish));
+  }
+
   // -------------------------------------------- действия (callback-кнопки)
   const routes = new Map<string, { fn: Handler; n: number; clear: boolean }>();
   const route = (action: string, n: number, fn: Handler, clear = true) => routes.set(action, { fn, n, clear });
@@ -198,7 +213,27 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   });
   route("wi", 2, async (ctx, gid, wid) => {
     const wish = await svc.ownWish(gid, uidOf(ctx), wid);
-    await show(ctx, `🎁 ${e(wish.text)}`, kb.wishItem(gid, wid));
+    await show(ctx, t.wishCard(wish), kb.wishItem(gid, wish));
+  });
+  route("wl", 2, async (ctx, gid, wid) => {
+    await svc.ownWish(gid, uidOf(ctx), wid);
+    await db.setState(uidOf(ctx), "wish_link", { gid, wid });
+    await show(ctx, t.ASK_LINK, kb.cancelToItem(gid, wid));
+  });
+  route("wp", 2, async (ctx, gid, wid) => {
+    await svc.ownWish(gid, uidOf(ctx), wid);
+    await db.setState(uidOf(ctx), "wish_price", { gid, wid });
+    await show(ctx, t.ASK_PRICE, kb.cancelToItem(gid, wid));
+  });
+  route("wlx", 2, async (ctx, gid, wid) => {
+    await svc.setWishLink(gid, uidOf(ctx), wid, null);
+    await showWishCard(ctx, gid, wid);
+    await notifySanta(ctx, gid, uidOf(ctx));
+  });
+  route("wpx", 2, async (ctx, gid, wid) => {
+    await svc.setWishPrice(gid, uidOf(ctx), wid, null);
+    await showWishCard(ctx, gid, wid);
+    await notifySanta(ctx, gid, uidOf(ctx));
   });
   route("we", 2, async (ctx, gid, wid) => {
     const wish = await svc.ownWish(gid, uidOf(ctx), wid);
@@ -216,7 +251,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const me = (await db.getReadiness(gid)).find((p) => p.user_id === uid)!;
     const makeReady = me.ready !== 1;
     const { ready, total } = await svc.setReady(gid, uid, makeReady);
-    await screenGame(ctx, uid, gid);
+    await screenWishlist(ctx, uid, gid);
     if (!makeReady) return;
     // организатору — прогресс; когда готовы все, он узнаёт, что можно проводить жеребьёвку
     const note =
@@ -248,13 +283,12 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const game = await svc.gameForPlayer(gid, uidOf(ctx));
     if (game.status !== "open") throw new UserError("Жеребьёвка проведена — приглашать уже поздно.");
     await show(ctx, t.inviteIntro(game.title), kb.back(gid));
-    await ctx.api.sendMessage(uidOf(ctx), await inviteLink(ctx, game.code), {
-      link_preview_options: { is_disabled: true },
-    });
+    await sendInvite(ctx, game);
   });
   route("ml", 1, async (ctx, gid) => {
     const game = await svc.gameForOrganizer(gid, uidOf(ctx));
-    await show(ctx, t.invite(await inviteLink(ctx, game.code)), kb.backManage(gid));
+    await show(ctx, t.inviteIntro(game.title), kb.backManage(gid));
+    await sendInvite(ctx, game);
   });
   route("mp", 1, (ctx, gid) => screenPlayers(ctx, uidOf(ctx), gid));
   route("mpr", 2, async (ctx, gid, target) => {
@@ -463,14 +497,13 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
   });
 
   // --------------------------------------------------- ввод текста (FSM)
-  async function afterWishSaved(ctx: Context, gid: number, saved: string): Promise<void> {
+  async function afterWishSaved(ctx: Context, gid: number, wid: number, saved: string): Promise<void> {
     const uid = uidOf(ctx);
     await db.clearState(uid);
     const game = (await db.getGame(gid))!;
-    const me = (await db.getReadiness(gid)).find((p) => p.user_id === uid)!;
     await ctx.reply(`${saved} ✅\n\n` + t.myWishlist(await db.getWishes(gid, uid), game.status === "drawn"), {
       parse_mode: HTML,
-      reply_markup: kb.afterWish(gid, game.status === "open" ? me.ready === 1 : undefined),
+      reply_markup: kb.afterWish(gid, wid),
     });
     await notifySanta(ctx, gid, uid);
   }
@@ -485,30 +518,43 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
         const game = await svc.createGame(text, uid, nameOf(ctx));
         await db.clearState(uid);
         await ctx.reply(
-          `Игра «${e(game.title)}» создана! 🎄\n\nСсылка-приглашение:\n${e(await inviteLink(ctx, game.code))}\n\n` +
-            "Разошлите её участникам. Когда все вступят — запустите жеребьёвку в «Управление игрой».",
+          `Игра «${e(game.title)}» создана! 🎄\n\nПерешлите следующее сообщение тем, кого хотите пригласить. ` +
+            "Когда все вступят и добавят подарки — запустите жеребьёвку в «Управление игрой».",
           { parse_mode: HTML },
         );
+        await sendInvite(ctx, game);
         await screenGame(ctx, uid, game.id);
       } else if (st.state === "wish_add") {
-        await svc.addWish(st.data.gid, uid, text);
-        await afterWishSaved(ctx, st.data.gid, "Добавлено");
+        const wid = await svc.addWish(st.data.gid, uid, text);
+        await afterWishSaved(ctx, st.data.gid, wid, "Добавлено");
       } else if (st.state === "wish_edit") {
         await svc.editWish(st.data.gid, uid, st.data.wid, text);
-        await afterWishSaved(ctx, st.data.gid, "Изменено");
+        await afterWishSaved(ctx, st.data.gid, st.data.wid, "Изменено");
+      } else if (st.state === "wish_link" || st.state === "wish_price") {
+        const { gid, wid } = st.data;
+        if (st.state === "wish_link") await svc.setWishLink(gid, uid, wid, text);
+        else await svc.setWishPrice(gid, uid, wid, text);
+        await db.clearState(uid);
+        const wish = await svc.ownWish(gid, uid, wid);
+        await ctx.reply(`${st.state === "wish_link" ? "Ссылка сохранена" : "Стоимость сохранена"} ✅\n\n${t.wishCard(wish)}`, {
+          parse_mode: HTML,
+          reply_markup: kb.wishItem(gid, wish),
+        });
+        await notifySanta(ctx, gid, uid);
       } else {
         await ctx.reply(t.UNKNOWN_TEXT);
       }
     } catch (err) {
       if (!(err instanceof UserError)) throw err;
       // состояние сохраняется: можно сразу прислать исправленный текст
-      const gid = st.data?.gid;
-      await ctx.reply(err.message, gid ? { reply_markup: kb.cancelInput(gid) } : undefined);
+      const { gid, wid } = st.data ?? {};
+      const cancel = gid && wid && (st.state === "wish_link" || st.state === "wish_price") ? kb.cancelToItem(gid, wid) : gid ? kb.cancelInput(gid) : undefined;
+      await ctx.reply(err.message, cancel ? { reply_markup: cancel } : undefined);
     }
   });
 
   bot.on("message", async (ctx) => {
     const st = await db.getState(uidOf(ctx));
-    await ctx.reply(st && ["title", "wish_add", "wish_edit"].includes(st.state) ? t.NON_TEXT : t.UNKNOWN_TEXT);
+    await ctx.reply(st && ["title", "wish_add", "wish_edit", "wish_link", "wish_price"].includes(st.state) ? t.NON_TEXT : t.UNKNOWN_TEXT);
   });
 }

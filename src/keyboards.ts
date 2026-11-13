@@ -15,14 +15,13 @@ function short(text: string, n = 40): string {
 export const gamesList = (games: Game[]): Markup =>
   kb(...games.map((g) => [btn(`🎄 ${short(g.title)}`, `g:${g.id}`)]), [btn("➕ Создать игру", "new")]);
 
-export function gameMenu(game: Game, isOrg: boolean, wishCount: number, ready = false): Markup {
+export function gameMenu(game: Game, isOrg: boolean, wishCount: number): Markup {
   const gid = game.id;
   const drawn = game.status === "drawn";
   const rows: Button[][] = [
     [btn(`📝 Мой список (${wishCount})`, `w:${gid}`)],
     [btn("➕ Добавить подарок", `wa:${gid}`)],
   ];
-  if (!drawn) rows.push([readyButton(gid, ready)]);
   if (!drawn) rows.push([btn("🔗 Пригласить участников", `il:${gid}`)]);
   if (drawn) rows.push([btn("🎯 Кому я дарю", `to:${gid}`)]);
   if (isOrg) rows.push([btn("⚙️ Управление игрой", `m:${gid}`)]);
@@ -36,28 +35,41 @@ const readyButton = (gid: number, ready: boolean): Button =>
 
 export const back = (gid: number): Markup => kb([btn("⬅️ В меню игры", `g:${gid}`)]);
 
-export const myWishlist = (gid: number, wishes: Wish[]): Markup =>
+/** «Готов» — только здесь, где виден сам список. ready === undefined — игра разыграна, кнопки нет. */
+export const myWishlist = (gid: number, wishes: Wish[], ready?: boolean): Markup =>
   kb(
     ...wishes.map((w, i) => [btn(`${i + 1}. ${short(w.text)}`, `wi:${gid}:${w.id}`)]),
     [btn("➕ Добавить подарок", `wa:${gid}`)],
+    ...(ready === undefined ? [] : [[readyButton(gid, ready)]]),
     [btn("⬅️ В меню игры", `g:${gid}`)],
   );
 
-export const wishItem = (gid: number, wid: number): Markup =>
+export const wishItem = (gid: number, w: Wish): Markup =>
   kb(
-    [btn("✏️ Изменить", `we:${gid}:${wid}`), btn("🗑 Удалить", `wd:${gid}:${wid}`)],
+    [btn("✏️ Изменить", `we:${gid}:${w.id}`), btn("🗑 Удалить", `wd:${gid}:${w.id}`)],
+    [
+      btn(w.url ? "🔗 Изменить ссылку" : "🔗 Добавить ссылку", `wl:${gid}:${w.id}`),
+      btn(w.price ? "💰 Изменить цену" : "💰 Добавить цену", `wp:${gid}:${w.id}`),
+    ],
+    ...(w.url || w.price
+      ? [[
+          ...(w.url ? [btn("❌ Убрать ссылку", `wlx:${gid}:${w.id}`)] : []),
+          ...(w.price ? [btn("❌ Убрать цену", `wpx:${gid}:${w.id}`)] : []),
+        ]]
+      : []),
     [btn("⬅️ К списку", `w:${gid}`)],
   );
 
-export const afterWish = (gid: number, ready?: boolean): Markup =>
+export const afterWish = (gid: number, wid: number): Markup =>
   kb(
     [btn("➕ Добавить ещё", `wa:${gid}`)],
-    ...(ready === undefined ? [] : [[readyButton(gid, ready)]]),
+    [btn("🔗 Добавить ссылку", `wl:${gid}:${wid}`), btn("💰 Добавить цену", `wp:${gid}:${wid}`)],
     [btn("📝 Мой список", `w:${gid}`)],
     [btn("⬅️ В меню игры", `g:${gid}`)],
   );
 
 export const cancelInput = (gid: number): Markup => kb([btn("✖️ Отмена", `g:${gid}`)]);
+export const cancelToItem = (gid: number, wid: number): Markup => kb([btn("✖️ Отмена", `wi:${gid}:${wid}`)]);
 
 export function manage(gid: number, open: boolean): Markup {
   const rows: Button[][] = [
