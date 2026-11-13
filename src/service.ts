@@ -1,6 +1,7 @@
 import { MAX_PLAYERS, MAX_RULES, MAX_TITLE_LEN, MAX_WISHES, MAX_WISH_LEN, MIN_PLAYERS } from "./config";
 import { type Database, type Game, type Player, type PlayerReadiness, isReady } from "./db";
 import { DrawImpossible, makeDraw } from "./draw";
+import { type YMD, dayNumber, localNow, parseDateInput, ymdToString } from "./dates";
 import { InvalidInput, normalizePrice, normalizeUrl } from "./links";
 
 export { DrawImpossible };
@@ -83,6 +84,34 @@ export class Service {
     if (game.organizer_id === userId) throw new UserError("Организатор не может выйти из своей игры.");
     if (game.status !== "open") throw new UserError("Жеребьёвка уже проведена, выйти нельзя.");
     await this.db.removePlayer(gameId, userId);
+  }
+
+  // --- дедлайн ---------------------------------------------------------
+  /** Разбор даты дедлайна; ошибки формата — UserError с подсказкой. */
+  parseDeadlineDate(input: string, nowMs = Date.now()): YMD {
+    try {
+      return parseDateInput(input, nowMs);
+    } catch (err) {
+      if (err instanceof InvalidInput) throw new UserError(err.message);
+      throw err;
+    }
+  }
+
+  /** Ставит или меняет дедлайн (организатор, пока игра открыта). Конец дня — в часовом поясе organizer. */
+  async setDeadline(gameId: number, organizerId: number, date: YMD, tzOffset: number, nowMs = Date.now()): Promise<Game> {
+    await this.organizerOpenGame(gameId, organizerId);
+    if (!Number.isInteger(tzOffset) || tzOffset < -12 || tzOffset > 14) throw new UserError("Неверный часовой пояс.");
+    // дата должна быть не в прошлом по местному времени (сегодня — можно)
+    if (dayNumber(date) < dayNumber(localNow(nowMs, tzOffset)))
+      throw new UserError("Эта дата уже прошла в выбранном часовом поясе.");
+    // напоминания начнутся со следующих суток: сегодняшний день помечаем как «уже напомнили»
+    await this.db.setDeadline(gameId, ymdToString(date), tzOffset, ymdToString(localNow(nowMs, tzOffset)));
+    return (await this.db.getGame(gameId))!;
+  }
+
+  async clearDeadline(gameId: number, organizerId: number): Promise<void> {
+    await this.organizerOpenGame(gameId, organizerId);
+    await this.db.clearDeadline(gameId);
   }
 
   // --- подарки ---------------------------------------------------------

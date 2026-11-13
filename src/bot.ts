@@ -5,6 +5,7 @@ import * as kb from "./keyboards";
 import type { Markup } from "./keyboards";
 import { type OutMsg, type Outbox } from "./outbox";
 import { type PlayerReadiness, isReady } from "./db";
+import { formatRu, parseYMD, ymdToString } from "./dates";
 import { DrawImpossible, NotReadyError, Service, UserError } from "./service";
 import * as t from "./texts";
 
@@ -111,7 +112,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const ready = me.ready === 1; // то, что участник отметил сам; изменяется только его кликом
     await show(
       ctx,
-      t.gameMenu(game, all.length, isOrg, ready, me.wish_count),
+      t.gameMenu(game, all.length, isOrg, ready, me.wish_count, t.deadlineLine(game, Date.now())),
       kb.gameMenu(game, isOrg, me.wish_count),
     );
   }
@@ -128,7 +129,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     const game = await svc.gameForOrganizer(gid, uid);
     const open = game.status === "open";
     const { ready, total } = await svc.readiness(gid);
-    let text = t.gameMenu(game, total, true) + "\n\n⚙️ <b>Управление игрой</b>";
+    let text = t.gameMenu(game, total, true, undefined, 1, t.deadlineLine(game, Date.now())) + "\n\n⚙️ <b>Управление игрой</b>";
     text += open ? `\nСписки готовы: ${ready} из ${total}` : "\nЖеребьёвка проведена: участников и правила менять нельзя.";
     await show(ctx, text, kb.manage(gid, open));
   }
@@ -164,6 +165,11 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     );
   }
 
+  async function screenDeadline(ctx: Context, uid: number, gid: number): Promise<void> {
+    const game = await svc.organizerOpenGame(gid, uid);
+    await show(ctx, t.deadlineScreen(game, Date.now()), kb.deadlineMenu(gid, game.deadline_date !== null));
+  }
+
   async function screenTarget(ctx: Context, uid: number, gid: number): Promise<void> {
     const game = await svc.gameForPlayer(gid, uid);
     const target = await db.getReceiver(gid, uid);
@@ -180,6 +186,14 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
     for (const part of t.wishesUpdatedParts(player.name, await db.getWishes(gid, uid))) {
       if (!(await safeSend(ctx, santa, part))) break;
     }
+  }
+
+  /** Сообщение всем участникам, кроме организатора (через очередь: лимит внешних запросов на вызов). */
+  async function notifyPlayers(gid: number, organizerId: number, text: string): Promise<void> {
+    const msgs: OutMsg[] = (await db.getPlayers(gid))
+      .filter((p) => p.user_id !== organizerId)
+      .map((p) => ({ chat: p.user_id, text, markup: kb.openGame(gid) }));
+    if (msgs.length) await outbox.send(msgs);
   }
 
   async function inviteLink(ctx: Context, code: string): Promise<string> {
@@ -266,6 +280,26 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
           ? `✅ ${e(nameOf(ctx))} отметил(а) список готовым. Готовы: ${ready} из ${total}.`
           : null;
     if (note) await safeSend(ctx, game.organizer_id, note);
+  });
+  route("dl", 1, (ctx, gid) => screenDeadline(ctx, uidOf(ctx), gid));
+  route("dls", 1, async (ctx, gid) => {
+    await svc.organizerOpenGame(gid, uidOf(ctx));
+    await db.setState(uidOf(ctx), "deadline_date", { gid });
+    await show(ctx, t.ASK_DEADLINE, kb.cancelToDeadline(gid));
+  });
+  route("dlx", 1, async (ctx, gid) => {
+    const game = await svc.organizerOpenGame(gid, uidOf(ctx));
+    const had = game.deadline_date !== null;
+    await svc.clearDeadline(gid, uidOf(ctx));
+    if (had) await notifyPlayers(gid, uidOf(ctx), t.deadlineClearedNotice(game.title));
+    await screenDeadline(ctx, uidOf(ctx), gid);
+  });
+  // дата зашита в кнопку числом YYYYMMDD, второй аргумент — сдвиг часового пояса в часах
+  route("dz", 3, async (ctx, gid, ymd, tz) => {
+    const date = { y: Math.floor(ymd / 10000), m: Math.floor(ymd / 100) % 100, d: ymd % 100 };
+    const game = await svc.setDeadline(gid, uidOf(ctx), date, tz);
+    await notifyPlayers(gid, uidOf(ctx), t.deadlineSetNotice(game.title, ymdToString(date), tz));
+    await screenDeadline(ctx, uidOf(ctx), gid);
   });
   route("to", 1, (ctx, gid) => screenTarget(ctx, uidOf(ctx), gid));
   route("lv", 1, async (ctx, gid) => {
@@ -535,6 +569,14 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
       } else if (st.state === "wish_edit") {
         await svc.editWish(st.data.gid, uid, st.data.wid, text);
         await afterWishSaved(ctx, st.data.gid, st.data.wid, "Изменено");
+      } else if (st.state === "deadline_date") {
+        const { y, m, d } = svc.parseDeadlineDate(text);
+        await svc.organizerOpenGame(st.data.gid, uid);
+        await db.clearState(uid);
+        await ctx.reply(
+          `Дедлайн: ${formatRu(ymdToString({ y, m, d }))}.\nВ каком часовом поясе считать конец дня? Напоминания придут около 10:00 по этому времени.`,
+          { reply_markup: kb.tzPicker(st.data.gid, y * 10000 + m * 100 + d) },
+        );
       } else if (st.state === "wish_link" || st.state === "wish_price") {
         const { gid, wid } = st.data;
         if (st.state === "wish_link") await svc.setWishLink(gid, uid, wid, text);
@@ -553,6 +595,7 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
       if (!(err instanceof UserError)) throw err;
       // состояние сохраняется: можно сразу прислать исправленный текст
       const { gid, wid } = st.data ?? {};
+      if (st.state === "deadline_date") return void (await ctx.reply(err.message, { reply_markup: kb.cancelToDeadline(gid) }));
       const cancel = gid && wid && (st.state === "wish_link" || st.state === "wish_price") ? kb.cancelToItem(gid, wid) : gid ? kb.cancelInput(gid) : undefined;
       await ctx.reply(err.message, cancel ? { reply_markup: cancel } : undefined);
     }
@@ -560,6 +603,6 @@ export function registerHandlers(bot: Bot, db: Database, outbox: Outbox): void {
 
   bot.on("message", async (ctx) => {
     const st = await db.getState(uidOf(ctx));
-    await ctx.reply(st && ["title", "wish_add", "wish_edit", "wish_link", "wish_price"].includes(st.state) ? t.NON_TEXT : t.UNKNOWN_TEXT);
+    await ctx.reply(st && ["title", "wish_add", "wish_edit", "wish_link", "wish_price", "deadline_date"].includes(st.state) ? t.NON_TEXT : t.UNKNOWN_TEXT);
   });
 }

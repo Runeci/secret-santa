@@ -21,6 +21,9 @@ export interface Game {
   organizer_id: number;
   status: "open" | "drawn";
   created_at: number;
+  deadline_date: string | null; // локальная дата дедлайна YYYY-MM-DD (необязательно)
+  tz_offset: number; // часовой пояс организатора: сдвиг от UTC в часах
+  last_reminded_day: string | null;
 }
 export interface Player {
   game_id: number;
@@ -73,6 +76,28 @@ export class Database {
         .bind(organizerId, organizerName, t, code),
     ]);
     return (await this.getGameByCode(code))!;
+  }
+
+  async setDeadline(gameId: number, date: string, tzOffset: number, remindedDay: string): Promise<void> {
+    await this.d
+      .prepare("UPDATE games SET deadline_date = ?, tz_offset = ?, last_reminded_day = ? WHERE id = ?")
+      .bind(date, tzOffset, remindedDay, gameId)
+      .run();
+  }
+  async clearDeadline(gameId: number): Promise<void> {
+    await this.d
+      .prepare("UPDATE games SET deadline_date = NULL, last_reminded_day = NULL WHERE id = ?")
+      .bind(gameId)
+      .run();
+  }
+  async gamesWithDeadline(): Promise<Game[]> {
+    const r = await this.d
+      .prepare("SELECT * FROM games WHERE status = 'open' AND deadline_date IS NOT NULL")
+      .all<Game>();
+    return r.results;
+  }
+  async setLastReminded(gameId: number, day: string): Promise<void> {
+    await this.d.prepare("UPDATE games SET last_reminded_day = ? WHERE id = ?").bind(day, gameId).run();
   }
 
   getGame(id: number): Promise<Game | null> {

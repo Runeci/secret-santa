@@ -73,6 +73,7 @@ export const afterWish = (gid: number, wid: number): Markup =>
   );
 
 export const cancelInput = (gid: number): Markup => kb([btn("✖️ Отмена", `g:${gid}`)]);
+export const cancelToDeadline = (gid: number): Markup => kb([btn("✖️ Отмена", `dl:${gid}`)]);
 export const cancelToItem = (gid: number, wid: number): Markup => kb([btn("✖️ Отмена", `wi:${gid}:${wid}`)]);
 
 export function manage(gid: number, open: boolean): Markup {
@@ -81,6 +82,7 @@ export function manage(gid: number, open: boolean): Markup {
     [btn("🚫 Правила «кто кому не дарит»", `mr:${gid}`)],
     [btn("🔗 Ссылка-приглашение", `ml:${gid}`)],
   ];
+  if (open) rows.push([btn("📅 Дедлайн", `dl:${gid}`)]);
   if (open) rows.push([btn("🎲 Провести жеребьёвку", `md:${gid}`)]);
   rows.push([btn("🗑 Удалить игру", `mx:${gid}`)]);
   rows.push([btn("⬅️ В меню игры", `g:${gid}`)]);
@@ -119,6 +121,24 @@ export const rulePicker = (gid: number, plist: Player[], selected: Set<number>):
     [btn(`💾 Сохранить (${selected.size})`, `mrs:${gid}`)],
     [btn("✖️ Отмена", `mr:${gid}`)],
   );
+
+export const deadlineMenu = (gid: number, has: boolean): Markup =>
+  kb(
+    [btn(has ? "✏️ Изменить дату" : "📅 Задать дедлайн", `dls:${gid}`)],
+    ...(has ? [[btn("❌ Убрать дедлайн", `dlx:${gid}`)]] : []),
+    [btn("⬅️ Управление", `m:${gid}`)],
+  );
+
+const TZ_OFFSETS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+/** Выбор часового пояса; дата зашита в кнопку числом YYYYMMDD, поэтому отдельное состояние не нужно. */
+export const tzPicker = (gid: number, ymd: number): Markup =>
+  kb(
+    ...[0, 4, 8].map((i) => TZ_OFFSETS.slice(i, i + 4).map((o) => btn(`UTC+${o}`, `dz:${gid}:${ymd}:${o}`))),
+    [btn("UTC+0", `dz:${gid}:${ymd}:0`)],
+    [btn("✖️ Отмена", `dl:${gid}`)],
+  );
+
+export const openGame = (gid: number): Markup => kb([btn("🎄 Открыть игру", `g:${gid}`)]);
 
 export const drawRetry = (gid: number): Markup =>
   kb([btn("🚫 Открыть правила", `mr:${gid}`)], [btn("⬅️ Управление", `m:${gid}`)]);

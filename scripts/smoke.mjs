@@ -29,7 +29,7 @@ const sh = (args) => execFileSync("npx", ["wrangler", ...args], { env, stdio: "p
 sh(["d1", "migrations", "apply", "secret-santa", "--local"]);
 
 const worker = spawn("npx", ["wrangler", "dev", "--port", String(WORKER_PORT), "--ip", "127.0.0.1",
-  "--var", "BOT_TOKEN:123:SMOKE", "--var", `WEBHOOK_SECRET:${SECRET}`, "--var", `TELEGRAM_API_ROOT:http://127.0.0.1:${TG_PORT}`],
+  "--var", "BOT_TOKEN:123:SMOKE", "--var", `WEBHOOK_SECRET:${SECRET}`, "--var", `TELEGRAM_API_ROOT:http://127.0.0.1:${TG_PORT}`, "--test-scheduled"],
   { env, stdio: ["ignore", "pipe", "pipe"], detached: true }); // своя группа процессов: убиваем целиком
 let wlog = "";
 worker.stdout.on("data", (d) => (wlog += d));
@@ -93,11 +93,26 @@ try {
   await sleep(1500);
   if (log.filter((l) => /не все списки готовы/.test(l.text ?? "")).length <= before) fail("draw should be refused until the organizer marks the list ready");
   await click(1, "Org", "rd:1");
+  // дедлайн через интерфейс (дата + часовой пояс), затем ручной запуск расписания: обработчик cron должен отработать без ошибок
+  await click(1, "Org", "dls:1");
+  const d = new Date(Date.now() + 10 * 86_400_000);
+  const p2 = (n) => String(n).padStart(2, "0");
+  await say(1, "Org", `${p2(d.getUTCDate())}.${p2(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`);
+  const ymd = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+  await click(1, "Org", `dz:1:${ymd}:3`);
+  // уведомление идёт через очередь (пачки раз в ~секунду) — ждём
+  for (let i = 0; i < 30 && !log.some((l) => /назначен дедлайн/.test(l.text ?? "")); i++) await sleep(500);
+  if (!log.some((l) => /назначен дедлайн/.test(l.text ?? ""))) fail("participants should be notified about the deadline");
+  const cron = await fetch(`http://127.0.0.1:${WORKER_PORT}/cdn-cgi/handler/scheduled?cron=0+*+*+*+*`);
+  const cronBody = await cron.text();
+  console.log("scheduled:", cron.status, cronBody.slice(0, 80));
+  if (!cron.ok) fail(`scheduled handler failed: ${cron.status} ${cronBody}`);
+
   await click(1, "Org", "mdy:1");
   for (let i = 0; i < 40 && log.filter((l) => l.method === "sendMessage" && /Тайный Санта для/.test(l.text ?? "")).length < 3; i++) await sleep(500);
   const dms = log.filter((l) => l.method === "sendMessage" && /Тайный Санта для/.test(l.text ?? ""));
   const chats = new Set(dms.map((d) => d.chat_id));
   if (dms.length !== 3 || chats.size !== 3) fail(`expected 3 distinct DMs via queue, got ${dms.length} to ${[...chats]}`);
-  console.log("OK: webhook 401 on bad secret; draw refused until all lists are ready; then delivered via queue to", [...chats].join(", "));
+  console.log("OK: webhook 401 on bad secret; deadline set + cron handler ran; draw refused until all lists are ready; then delivered via queue to", [...chats].join(", "));
   cleanup(0);
 } catch (e) { fail(String(e)); }

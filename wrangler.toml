@@ -20,3 +20,7 @@ queue = "santa-outbox"
 max_batch_size = 10
 max_batch_timeout = 1
 max_retries = 4
+
+# Напоминания о дедлайне: запуск каждый час (кому слать и когда, решает код по часовому поясу организатора)
+[triggers]
+crons = ["0 * * * *"]

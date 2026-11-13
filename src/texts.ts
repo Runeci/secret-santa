@@ -1,5 +1,6 @@
 /** Тексты (parse_mode HTML). Всё пользовательское обязательно экранируется через e(). */
 import { MAX_NAME_LEN, MAX_WISHES, MAX_WISH_LEN } from "./config";
+import { dayNumber, daysWord, formatRu, localNow, parseYMD, tzLabel } from "./dates";
 import type { Game, PlayerReadiness, Wish } from "./db";
 
 /** Сокращение по символам (эмодзи не режутся пополам). */
@@ -19,6 +20,8 @@ export const ASK_WISH = `Напишите один подарок, которы�
 export const ASK_LINK =
   "Пришлите ссылку на подарок (карточка товара, магазин). Например: https://example.com/товар\nЕё можно будет изменить или убрать.";
 export const ASK_PRICE = "Напишите примерную стоимость, например: 3000 ₽ или около 50 $.\nЕё можно будет изменить или убрать.";
+export const ASK_DEADLINE =
+  "📅 Пришлите дату дедлайна: например 20.12 или 20.12.2026.\nДо этой даты участники должны добавить подарки и нажать «Мой список готов».";
 export const CANCELLED = "Отменено.";
 export const UNKNOWN_TEXT = "Не понял 🤔 Откройте меню: /start";
 export const STALE = "Эта кнопка устарела. Откройте меню: /start";
@@ -72,7 +75,18 @@ export function splitParts(header: string, lines: string[], footer: string, limi
   return parts;
 }
 
-export function gameMenu(game: Game, players: number, isOrg: boolean, ready?: boolean, wishCount = 1): string {
+/** Строка про дедлайн для меню игры (null — дедлайна нет). Только для открытых игр. */
+export function deadlineLine(game: Game, nowMs: number): string | null {
+  if (!game.deadline_date || game.status !== "open") return null;
+  const left = dayNumber(parseYMD(game.deadline_date)) - dayNumber(localNow(nowMs, game.tz_offset));
+  const date = formatRu(game.deadline_date);
+  if (left < 0) return `⚠️ Дедлайн прошёл (${date})`;
+  if (left === 0) return `📅 Дедлайн: сегодня, ${date} — последний день`;
+  if (left === 1) return `📅 Дедлайн: завтра, ${date}`;
+  return `📅 Дедлайн: до ${date} (осталось ${daysWord(left)})`;
+}
+
+export function gameMenu(game: Game, players: number, isOrg: boolean, ready?: boolean, wishCount = 1, deadline?: string | null): string {
   const status = game.status === "open" ? "ждём участников" : "жеребьёвка проведена ✅";
   let mine = "";
   if (game.status === "open" && ready !== undefined) {
@@ -82,7 +96,7 @@ export function gameMenu(game: Game, players: number, isOrg: boolean, ready?: bo
   // роль — отдельной строкой, чтобы организатор сразу видел, что он управляет игрой
   const icon = isOrg ? "👑" : "🎄";
   const role = isOrg ? "Вы — организатор" : "Вы — участник";
-  return `${icon} <b>${e(game.title)}</b>\n${role}\nУчастников: ${players} · ${status}${mine}`;
+  return `${icon} <b>${e(game.title)}</b>\n${role}\nУчастников: ${players} · ${status}${deadline ? `\n${deadline}` : ""}${mine}`;
 }
 
 const PREVIEW_LEN = 150;
@@ -147,6 +161,34 @@ export function notReadyParts(items: PlayerReadiness[], organizerName?: string):
         (p.wish_count === 0 ? "нет подарков" : "не отметил(а) список готовым"),
     ),
     "\n\nПопросите их добавить подарки и нажать «✅ Мой список готов» в меню игры, затем запустите жеребьёвку снова.",
+  );
+}
+
+export function deadlineScreen(game: Game, nowMs: number): string {
+  const head = "📅 <b>Дедлайн</b>\n\n";
+  const rules =
+    "\n\nБот напоминает тем, кто не нажал «✅ Мой список готов»: по субботам до дедлайна и за день до него. " +
+    "Вам, организатору, — сводка за день до дедлайна и в его день.";
+  if (!game.deadline_date) return head + "Дедлайн не задан." + rules;
+  return `${head}${deadlineLine(game, nowMs)}\nЧасовой пояс: ${tzLabel(game.tz_offset)} (напоминания около 10:00 по нему)${rules}`;
+}
+
+export const deadlineSetNotice = (title: string, date: string, tz: number): string =>
+  `📅 В игре «${e(title)}» назначен дедлайн: до ${formatRu(date)} (${tzLabel(tz)}).\n` +
+  "Добавьте подарки и нажмите «✅ Мой список готов» на экране «📝 Мой список».";
+export const deadlineClearedNotice = (title: string): string => `📅 В игре «${e(title)}» дедлайн отменён.`;
+
+export const deadlineReminder = (title: string, date: string, daysLeft: number): string =>
+  `⏰ Игра «${e(title)}»: ` +
+  (daysLeft === 1 ? "завтра" : `до дедлайна ${daysWord(daysLeft)}`) +
+  ` последний день — ${formatRu(date)}.\nВаш список ещё не готов: добавьте подарки и нажмите «✅ Мой список готов» на экране «📝 Мой список».`;
+
+export function deadlineSummaryParts(title: string, daysLeft: number, items: PlayerReadiness[]): string[] {
+  const when = daysLeft === 0 ? "сегодня последний день" : "завтра последний день";
+  return splitParts(
+    `📅 Игра «${e(title)}»: ${when}. Списки ещё не готовы у:\n`,
+    items.map((p) => `• ${listName(p.name)} — ${p.wish_count === 0 ? "нет подарков" : "не отметил(а) список готовым"}`),
+    "\n\nМожно подтолкнуть их или перенести дедлайн в «Управление игрой» → «📅 Дедлайн».",
   );
 }
 

@@ -3,6 +3,7 @@ import type { UserFromGetMe } from "grammy/types";
 import { registerHandlers } from "./bot";
 import { Database, type D1Like } from "./db";
 import { deliver, queueOutbox, type OutMsg } from "./outbox";
+import { runReminders } from "./reminders";
 
 interface Env {
   DB: D1Database;
@@ -50,6 +51,11 @@ export default {
       return webhookCallback(bot, "cloudflare-mod", { secretToken: env.WEBHOOK_SECRET })(request);
     }
     return new Response("Secret Santa bot is running", { status: 200 });
+  },
+
+  /** Раз в час: напоминания о дедлайне (кому и когда — решает planReminders, по местному времени организатора). */
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await runReminders(new Database(env.DB as unknown as D1Like), queueOutbox(env.OUTBOX));
   },
 
   /** Рассылка личных сообщений из очереди: по 10 за вызов, с повтором при лимитах Telegram. */
